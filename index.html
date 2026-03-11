@@ -1316,14 +1316,58 @@ function draw() {
     else drawEnemy(e);
   }
 
-  // Spits
-  for (const s of spits) {
-    ctx.fillStyle = '#2ecc71';
-    ctx.shadowBlur = 8; ctx.shadowColor = '#2ecc71';
+  // Spits — radioactive (added by Hayley_ht)
+  for (const s of lvlData.spits) {
+    ctx.save();
+    ctx.translate(s.x + s.w / 2, s.y + s.h / 2);
+
+    // outer toxic glow
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 14);
+    glow.addColorStop(0,   'rgba(57,255,20, 0.9)');
+    glow.addColorStop(0.4, 'rgba(100,255,0, 0.5)');
+    glow.addColorStop(1,   'rgba(0,80,0, 0)');
+    ctx.fillStyle = glow;
+    ctx.shadowBlur = 18; ctx.shadowColor = '#39ff14';
     ctx.beginPath();
-    ctx.ellipse(s.x, s.y, 8, 5, 0, 0, Math.PI * 2);
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
     ctx.fill();
+
+    // wobbly blob body
+    const wobble = Math.sin(frameCount * 0.3 + s.x) * 1.5;
+    ctx.fillStyle = '#39ff14';
+    ctx.beginPath();
+    ctx.ellipse(0, wobble, 9, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // drip underneath
+    ctx.fillStyle = '#1aaa00';
+    ctx.beginPath();
+    ctx.ellipse(0, 5 + wobble, 3, 4 + Math.abs(wobble), 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ☢ symbol
+    ctx.font = '9px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#001a00';
+    ctx.fillText('☢', 0, wobble);
+
     ctx.shadowBlur = 0;
+    ctx.restore();
+
+    // toxic drip trail particles (cheap: spawn every 4 frames)
+    if (frameCount % 4 === 0) {
+      particles.push({
+        x: s.x + s.w / 2 + (Math.random() - 0.5) * 6,
+        y: s.y + s.h / 2 + 4,
+        vx: (Math.random() - 0.5) * 0.8,
+        vy: 0.5 + Math.random() * 1,
+        life: 18 + Math.random() * 12,
+        maxLife: 30,
+        color: '#39ff14',
+        r: 2 + Math.random() * 2
+      });
+    }
   }
 
   // Llama
@@ -1487,13 +1531,19 @@ function drawLlama(l) {
   ctx.fillStyle = rb(320);
   ctx.fillRect(x, y + 18, 6, 8);
 
-  // Spit glow when cooling down
+  // Radioactive spit charge glow (Hayley_ht)
   if (l.spitCooldown > 30) {
-    ctx.globalAlpha = (l.spitCooldown - 30) / 10 * 0.5;
-    ctx.fillStyle = '#2ecc71';
+    ctx.globalAlpha = (l.spitCooldown - 30) / 10 * 0.7;
+    ctx.fillStyle = '#39ff14';
+    ctx.shadowBlur = 16; ctx.shadowColor = '#39ff14';
     ctx.beginPath();
-    ctx.arc(x + w + 2, y + 14, 6, 0, Math.PI * 2);
+    ctx.arc(x + w + 2, y + 14, 7, 0, Math.PI * 2);
     ctx.fill();
+    ctx.font = '7px serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#001a00';
+    ctx.fillText('☢', x + w + 2, y + 14);
+    ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
   }
 
