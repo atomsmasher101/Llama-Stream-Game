@@ -112,6 +112,7 @@
   <div>SCORE: <span id="scoreDisplay">0</span></div>
   <div>LIVES: <span id="livesDisplay">3</span></div>
   <div>LEVEL: <span id="levelDisplay">1</span></div>
+  <div>⏱ <span id="timerDisplay">1:00</span></div>
   <div>AMMO: <span id="ammoDisplay">🔫—</span></div>
   <div>SQUASHIE: <span id="squashieDisplay">🍬—</span></div>
 </div>
@@ -346,9 +347,15 @@ function coinRow(startX, y, count) {
 // ── GAME VARS ───────────────────────────────────────────────────────────────
 let llama, lvlData, keys = {}, particles = [], screenShake = 0;
 let deathTimer = 0, winTimer = 0;
+// ── ATOMIC TIMER (added by Pratchetty) ────────────────────────────────────
+const TIMER_START = 60 * 60; // 60 seconds at 60fps
+let bombTimer = TIMER_START;
+let atomicExplosion = null; // { frame, x, y } when triggered
 
 function startGame() {
   score = 0; lives = 3; level = 1;
+  bombTimer = TIMER_START;
+  atomicExplosion = null;
   loadLevel();
   state = 'playing';
   hideOverlay();
@@ -364,9 +371,16 @@ function loadLevel() {
 function nextLevel() {
   level++;
   if (level > 3) { winGame(); return; }
+  addTime(20 * 60); // +20s for reaching a flag
   loadLevel();
   state = 'playing';
   hideOverlay();
+  updateHUD();
+}
+
+// ── ADD TIME (added by Pratchetty) ─────────────────────────────────────────
+function addTime(frames) {
+  bombTimer = Math.min(bombTimer + frames, TIMER_START * 2);
   updateHUD();
 }
 
@@ -424,6 +438,12 @@ function updateHUD() {
   document.getElementById('squashieDisplay').textContent = (llama && llama.squashiePower > 0)
     ? '🍬 ' + Math.ceil(llama.squashiePower / 60) + 's'
     : '🍬—';
+  const secs = Math.ceil(bombTimer / 60);
+  const mins = Math.floor(secs / 60);
+  const s    = secs % 60;
+  const timerEl = document.getElementById('timerDisplay');
+  timerEl.textContent = `${mins}:${String(s).padStart(2,'0')}`;
+  timerEl.style.color = bombTimer < 600 ? (Math.floor(frameCount / 10) % 2 === 0 ? '#ff2222' : '#ffaa00') : '#f5c542';
 }
 
 // ── OVERLAY ──────────────────────────────────────────────────────────────────
@@ -495,6 +515,18 @@ function rectsOverlap(a, b) {
 function update() {
   frameCount++;
 
+  // ── ATOMIC EXPLOSION animation (added by Pratchetty) ──────────────────
+  if (atomicExplosion) {
+    atomicExplosion.frame++;
+    updateParticles();
+    if (atomicExplosion.frame > 180) {
+      atomicExplosion = null;
+      state = 'gameover';
+      showOverlay('☢️ ATOMIC ANNIHILATION ☢️', `The llama is nuclear dust.<br>Score: ${score}`, 'PRESS ENTER TO RETRY');
+    }
+    return;
+  }
+
   if (state === 'dead') {
     deathTimer--;
     if (deathTimer <= 0) respawn();
@@ -502,6 +534,19 @@ function update() {
     return;
   }
   if (state !== 'playing') { updateParticles(); return; }
+
+  // ── Tick bomb timer ────────────────────────────────────────────────────
+  bombTimer--;
+  if (bombTimer % 60 === 0) updateHUD(); // update display every second
+  if (bombTimer <= 0) {
+    // BOOM
+    bombTimer = 0;
+    atomicExplosion = { frame: 0, x: llama ? llama.x + llama.w/2 : W/2, y: llama ? llama.y + llama.h/2 : H/2 };
+    screenShake = 60;
+    // massive particle burst
+    for (let i = 0; i < 80; i++) spawnParticles(W/2, H/2, i % 3 === 0 ? '#ff4400' : i % 3 === 1 ? '#ffcc00' : '#ffffff', 1);
+    return;
+  }
 
   const { platforms, hazards, enemies, coins, flag, spits } = lvlData;
 
@@ -580,7 +625,7 @@ function update() {
         if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
           e.dead = true; e.deadTimer = 30;
           llama.vy = -8;
-          score += 200; updateHUD();
+          score += 200; addTime(4 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y, '#e8660a', 14);
         } else {
           playerDie();
@@ -630,11 +675,11 @@ function update() {
           e.hp--;
           llama.vy = -10;
           llama.invincible = 40;
-          score += 50; updateHUD();
+          score += 50; addTime(2 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y, '#00cc44', 14);
           if (e.hp <= 0) {
             e.dead = true; e.deadTimer = 60;
-            score += 500; updateHUD();
+            score += 500; addTime(10 * 60); updateHUD();
             spawnParticles(e.x + e.w/2, e.y + e.h/2, '#00ff88', 40);
           }
         } else if (llama.invincible <= 0) {
@@ -667,7 +712,7 @@ function update() {
       if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
         e.dead = true; e.deadTimer = 30;
         llama.vy = -8;
-        score += 100; updateHUD();
+        score += 100; addTime(3 * 60); updateHUD();
         spawnParticles(e.x + e.w/2, e.y, '#e74c3c', 12);
       } else {
         playerDie();
@@ -689,15 +734,15 @@ function update() {
           spawnParticles(e.x + e.w/2, e.y, '#00cc44', 10);
           if (e.hp <= 0) {
             e.dead = true; e.deadTimer = 60;
-            score += 500; updateHUD();
+            score += 500; addTime(10 * 60); updateHUD();
             spawnParticles(e.x + e.w/2, e.y + e.h/2, '#00ff88', 40);
           } else {
-            score += 50; updateHUD();
+            score += 50; addTime(2 * 60); updateHUD();
           }
         } else {
           e.dead = true; e.deadTimer = 30;
           spits.splice(i, 1);
-          score += 150; updateHUD();
+          score += 150; addTime(3 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y, '#27ae60', 12);
         }
         break;
@@ -709,7 +754,7 @@ function update() {
   for (const c of coins) {
     if (!c.collected && rectsOverlap(llama, c)) {
       c.collected = true;
-      score += 50; updateHUD();
+      score += 50; addTime(1 * 60); updateHUD();
       spawnParticles(c.x + 7, c.y + 7, '#f5c542', 8);
     }
   }
@@ -741,11 +786,11 @@ function update() {
       if (!e.dead && rectsOverlap(llama, e)) {
         if (e.type === 'jimmy') {
           e.hp = 0; e.dead = true; e.deadTimer = 60;
-          score += 500; updateHUD();
+          score += 500; addTime(10 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff69b4', 40);
         } else {
           e.dead = true; e.deadTimer = 30;
-          score += 300; updateHUD();
+          score += 300; addTime(3 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff69b4', 16);
         }
       }
@@ -766,12 +811,12 @@ function update() {
           spawnParticles(b.x, b.y, '#fff8aa', 10);
           if (e.hp <= 0) {
             e.dead = true; e.deadTimer = 60;
-            score += 500; updateHUD();
+            score += 500; addTime(10 * 60); updateHUD();
             spawnParticles(e.x + e.w/2, e.y + e.h/2, '#00ff88', 40);
-          } else { score += 50; updateHUD(); }
+          } else { score += 50; addTime(2 * 60); updateHUD(); }
         } else {
           e.dead = true; e.deadTimer = 30;
-          score += 200; updateHUD();
+          score += 200; addTime(3 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y + e.h/2, '#fff8aa', 14);
         }
         hit = true; break;
@@ -787,9 +832,10 @@ function update() {
     state = 'levelclear';
     winTimer = 90;
     score += 500 + level * 200;
+    addTime(20 * 60); // +20s for reaching the flag
     updateHUD();
     spawnParticles(flag.x + 10, flag.y + 45, '#f5c542', 30);
-    showOverlay(`LEVEL ${level} CLEAR! 🎉`, `Score: ${score}`, 'PRESS ENTER TO CONTINUE');
+    showOverlay(`LEVEL ${level} CLEAR! 🎉`, `Score: ${score} | +20s ⏱`, 'PRESS ENTER TO CONTINUE');
   }
 
   // — Invincibility —
@@ -1090,6 +1136,82 @@ function draw() {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+
+  // ── ATOMIC EXPLOSION (added by Pratchetty) ────────────────────────────
+  if (atomicExplosion) {
+    const f = atomicExplosion.frame;
+    const prog = f / 180;
+
+    // Blinding white flash at start
+    if (f < 20) {
+      ctx.globalAlpha = 1 - f / 20;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+
+    // Expanding fireball
+    const fbR = Math.min(f * 8, W);
+    const fbGrad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, fbR);
+    fbGrad.addColorStop(0,   `rgba(255,255,255,${Math.max(0, 1 - prog * 1.5)})`);
+    fbGrad.addColorStop(0.2, `rgba(255,220,50,${Math.max(0, 0.9 - prog)})`);
+    fbGrad.addColorStop(0.5, `rgba(255,80,0,${Math.max(0, 0.7 - prog * 0.8)})`);
+    fbGrad.addColorStop(1,   `rgba(80,0,0,0)`);
+    ctx.fillStyle = fbGrad;
+    ctx.beginPath();
+    ctx.arc(W/2, H/2, fbR, 0, Math.PI*2);
+    ctx.fill();
+
+    // Mushroom stem
+    if (f > 20) {
+      const stemH = Math.min((f - 20) * 4, H * 0.7);
+      const stemW = 30 + f * 0.2;
+      const stemAlpha = Math.max(0, 0.8 - prog * 0.5);
+      ctx.globalAlpha = stemAlpha;
+      const stemGrad = ctx.createLinearGradient(W/2 - stemW, H, W/2 + stemW, H);
+      stemGrad.addColorStop(0, '#331100');
+      stemGrad.addColorStop(0.5, '#884400');
+      stemGrad.addColorStop(1, '#331100');
+      ctx.fillStyle = stemGrad;
+      ctx.fillRect(W/2 - stemW/2, H - stemH, stemW, stemH);
+      ctx.globalAlpha = 1;
+    }
+
+    // Mushroom cap
+    if (f > 40) {
+      const capR = Math.min((f - 40) * 3, 160);
+      const capY  = Math.max(H/2 - 80, H - Math.min((f - 20) * 4, H * 0.7));
+      ctx.globalAlpha = Math.max(0, 0.9 - prog * 0.6);
+      const capGrad = ctx.createRadialGradient(W/2, capY, 0, W/2, capY, capR);
+      capGrad.addColorStop(0,   '#ffcc00');
+      capGrad.addColorStop(0.4, '#ff4400');
+      capGrad.addColorStop(0.7, '#661100');
+      capGrad.addColorStop(1,   'rgba(40,0,0,0)');
+      ctx.fillStyle = capGrad;
+      ctx.beginPath();
+      ctx.ellipse(W/2, capY, capR, capR * 0.6, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // ☢️ symbol in the centre
+    if (f > 30 && f < 140) {
+      ctx.globalAlpha = Math.min(1, (f - 30) / 20) * Math.max(0, (140 - f) / 30);
+      ctx.font = `bold ${60 + f * 0.3}px serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffff00';
+      ctx.shadowBlur = 30; ctx.shadowColor = '#ff8800';
+      ctx.fillText('☢️', W/2, H/2);
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+    }
+
+    // Screen-wide orange tint
+    ctx.globalAlpha = Math.max(0, 0.4 - prog * 0.4);
+    ctx.fillStyle = '#ff4400';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
 
   ctx.restore();
 }
