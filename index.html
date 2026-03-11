@@ -201,6 +201,116 @@
     .touch-btn { width: 58px; height: 58px; font-size: 1.3rem; }
     .touch-btn.wide { width: 76px; font-size: 1rem; }
   }
+  /* ── ESC MENU (added by AtomSmasher101) ──────────────────────────────────── */
+  #escMenu {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  #escMenu.open { display: flex; }
+
+  #escPanel {
+    background: #0d0d2a;
+    border: 3px solid #3C3B6E;
+    border-radius: 12px;
+    padding: 24px 28px;
+    min-width: 300px;
+    max-width: 420px;
+    width: 90vw;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: 0 0 40px rgba(60,59,110,0.8);
+    animation: rainbowBorder 2s linear infinite;
+  }
+
+  #escPanel h2 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: clamp(0.8rem, 3vw, 1.3rem);
+    color: #f5c542;
+    text-align: center;
+    text-shadow: 2px 2px #c0392b;
+    margin: 0;
+  }
+
+  .esc-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding-top: 12px;
+  }
+
+  .esc-label {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 0.5rem;
+    color: #aaa;
+    letter-spacing: 2px;
+  }
+
+  .esc-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .esc-btn {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 0.5rem;
+    padding: 10px 16px;
+    border-radius: 6px;
+    border: 2px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.1s, transform 0.1s;
+    flex: 1;
+  }
+  .esc-btn:hover  { background: rgba(255,255,255,0.2); transform: scale(1.04); }
+  .esc-btn:active { transform: scale(0.96); }
+  .esc-btn.danger { border-color: #e74c3c; color: #ff7777; }
+  .esc-btn.danger:hover { background: rgba(231,76,60,0.25); }
+
+  .vol-slider {
+    flex: 1;
+    accent-color: #3C3B6E;
+    height: 6px;
+    cursor: pointer;
+  }
+
+  #volValue {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 0.45rem;
+    color: #f5c542;
+    min-width: 36px;
+    text-align: right;
+  }
+
+  .mute-row { margin-top: 2px; }
+
+  .controls-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+    font-family: 'VT323', monospace;
+    font-size: 1rem;
+    color: #ccc;
+  }
+  .controls-grid span:nth-child(odd)  { color: #aaddff; text-align: right; }
+  .controls-grid span:nth-child(even) { color: #fff; }
+
+  .esc-hint {
+    font-family: 'VT323', monospace;
+    font-size: 0.9rem;
+    color: #666;
+    text-align: center;
+    margin: 0;
+  }
 </style>
 </head>
 <body>
@@ -238,6 +348,41 @@
   <h2>🦙 MEDIOCRE LLAMA LEAP 🦙</h2>
   <p>Dodge spikes, stomp enemies,<br>and reach the flag!</p>
   <p class="blink">PRESS ENTER TO START</p>
+</div>
+
+<!-- ESC Menu (added by AtomSmasher101) -->
+<div id="escMenu">
+  <div id="escPanel">
+    <h2>⏸ PAUSED</h2>
+    <div class="esc-section">
+      <div class="esc-row">
+        <button class="esc-btn" id="escResume">▶ RESUME</button>
+        <button class="esc-btn danger" id="escRestart">↺ RESTART</button>
+      </div>
+    </div>
+    <div class="esc-section">
+      <label class="esc-label">🔊 VOLUME</label>
+      <div class="esc-row">
+        <input type="range" id="volSlider" min="0" max="100" value="38" class="vol-slider">
+        <span id="volValue">38%</span>
+      </div>
+      <div class="esc-row mute-row">
+        <button class="esc-btn" id="escMute">🔊 MUTE</button>
+      </div>
+    </div>
+    <div class="esc-section controls-section">
+      <label class="esc-label">🎮 CONTROLS</label>
+      <div class="controls-grid">
+        <span>Move</span>       <span>← → / A D</span>
+        <span>Jump</span>       <span>↑ / W / Space</span>
+        <span>Spit 🫗</span>    <span>Space</span>
+        <span>Shoot 🔫</span>   <span>G / F</span>
+        <span>Mute 🔇</span>    <span>M</span>
+        <span>Pause</span>      <span>Esc</span>
+      </div>
+    </div>
+    <p class="esc-hint">ESC or ENTER to resume</p>
+  </div>
 </div>
 
 <script>
@@ -1012,11 +1157,14 @@ bindTouchBtn('btn-shoot', null, () => { if (state === 'playing') tryShoot(); });
 
 // ── MUTE (added by AtomSmasher101) ────────────────────────────────────────
 let muted = false;
+let volume = 0.06;
 function toggleMute() {
   muted = !muted;
-  Music.setVolume(muted ? 0 : 0.06);
-  const btn = document.getElementById('btn-mute');
-  if (btn) btn.textContent = muted ? '🔇' : '🔊';
+  Music.setVolume(muted ? 0 : volume);
+  const btn  = document.getElementById('btn-mute');
+  const eBtn = document.getElementById('escMute');
+  if (btn)  btn.textContent  = muted ? '🔇' : '🔊';
+  if (eBtn) eBtn.textContent = muted ? '🔇 UNMUTE' : '🔊 MUTE';
 }
 document.addEventListener('keydown', e => {
   if (e.code === 'KeyM') toggleMute();
@@ -1026,6 +1174,50 @@ if (muteBtn) {
   muteBtn.addEventListener('click', toggleMute);
   muteBtn.addEventListener('touchstart', e => { e.preventDefault(); toggleMute(); }, { passive: false });
 }
+
+// ── ESC MENU (added by AtomSmasher101) ─────────────────────────────────────
+const escMenu  = document.getElementById('escMenu');
+let paused = false;
+
+function openEscMenu() {
+  paused = true;
+  escMenu.classList.add('open');
+}
+function closeEscMenu() {
+  paused = false;
+  escMenu.classList.remove('open');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Escape') {
+    e.preventDefault();
+    if (state === 'playing' || state === 'dead') {
+      paused ? closeEscMenu() : openEscMenu();
+    } else if (paused) {
+      closeEscMenu();
+    }
+  }
+  if (e.code === 'Enter' && paused) closeEscMenu();
+});
+
+document.getElementById('escResume').addEventListener('click', closeEscMenu);
+
+document.getElementById('escRestart').addEventListener('click', () => {
+  closeEscMenu();
+  startGame();
+});
+
+document.getElementById('escMute').addEventListener('click', toggleMute);
+
+// Volume slider
+const volSlider = document.getElementById('volSlider');
+const volValue  = document.getElementById('volValue');
+volSlider.addEventListener('input', () => {
+  const pct = parseInt(volSlider.value);
+  volume = pct / 100 * 0.16; // scale to audio range
+  volValue.textContent = pct + '%';
+  if (!muted) Music.setVolume(volume);
+});
 
 // Tap overlay to start/continue on mobile
 document.getElementById('overlay').addEventListener('touchstart', (e) => {
@@ -2564,14 +2756,15 @@ function drawEnemy(e) {
 // ── GAME LOOP ─────────────────────────────────────────────────────────────
 let _lastTrack = '';
 function loop() {
-  update();
-  draw();
-  // Switch between main/boss track dynamically (added by Pratchetty)
-  if (state === 'playing') {
-    const t = getTrackForState();
-    if (t !== _lastTrack) { _lastTrack = t; Music.play(t); }
-  } else if (state !== 'dead') {
-    _lastTrack = '';
+  if (!paused) {
+    update();
+    draw();
+    if (state === 'playing') {
+      const t = getTrackForState();
+      if (t !== _lastTrack) { _lastTrack = t; Music.play(t); }
+    } else if (state !== 'dead') {
+      _lastTrack = '';
+    }
   }
   requestAnimationFrame(loop);
 }
