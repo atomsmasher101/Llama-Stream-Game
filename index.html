@@ -911,6 +911,7 @@ function playerDie() {
 function respawn() {
   const start = lvlData.platforms.find(p => p.type === 'ground');
   llama = makeLlama(60, start.y - 48);
+  llama.invincible = 180; // 3 seconds of invincibility after losing a life
   state = 'playing';
 }
 
@@ -1468,7 +1469,7 @@ function update() {
 
   // — Sugar Free Gummy Bears (added by AtomSmasher101) — less frequent than waffles
   const GUMMY_COLOURS = ['#ff3333','#33cc33','#ffaa00','#cc44ff','#ff66aa','#00bbff'];
-  if (frameCount % 180 === 90) { // every 3 seconds, offset from waffles
+  if (frameCount % 420 === 90) { // every 7 seconds, offset from waffles
     gummyBears.push({
       x: Math.random() * (W - 20),
       y: -28,
