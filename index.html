@@ -15,16 +15,22 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
+    height: 100dvh;
+    height: 100vh;
+    max-height: 100dvh;
     font-family: 'Press Start 2P', monospace;
     overflow: hidden;
+    padding: 4px 8px;
+    box-sizing: border-box;
   }
 
   #title {
-    font-size: 2rem;
-    margin-bottom: 8px;
-    letter-spacing: 4px;
+    font-size: clamp(0.5rem, 2.2vw, 1.8rem);
+    margin-bottom: 4px;
+    letter-spacing: clamp(1px, 0.4vw, 4px);
     animation: rainbowText 1s linear infinite;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   @keyframes rainbowText {
@@ -41,11 +47,16 @@
 
   #hud {
     display: flex;
-    gap: 40px;
-    margin-bottom: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px 16px;
+    margin-bottom: 4px;
     color: #fff;
-    font-size: 0.55rem;
+    font-size: clamp(0.22rem, 1.1vw, 0.5rem);
     animation: rainbowText 1.4s linear infinite;
+    width: 100%;
+    max-width: 800px;
+    line-height: 1.4;
   }
 
   #hud span { color: #fff; }
@@ -56,6 +67,10 @@
     display: block;
     image-rendering: pixelated;
     animation: rainbowBorder 1s linear infinite;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
   }
 
   @keyframes rainbowBorder {
@@ -99,25 +114,23 @@
 
   #controls {
     color: #888;
-    font-size: 0.4rem;
-    margin-top: 6px;
+    font-size: clamp(0.25rem, 0.8vw, 0.4rem);
+    margin-top: 4px;
     letter-spacing: 1px;
+    flex-shrink: 0;
   }
 
-  /* ── MOBILE (added by Pratchetty) ───────────────────────────────────────── */
+  /* ── LAYOUT (AtomSmasher101 — scales to fit all elements) ──────────────── */
   #gameWrapper {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     touch-action: none;
-  }
-
-  #gameCanvas {
-    max-width: 100vw;
-    max-height: 60vh;
-    width: auto;
-    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    max-width: 800px;
   }
 
   #touchControls {
@@ -181,63 +194,12 @@
     #touchControls { display: flex; }
     #controls { display: none; }
 
-    html, body {
-      height: 100%;
-      overflow: hidden;
-    }
+    html, body { height: 100%; overflow: hidden; }
+    body { justify-content: flex-start; padding: 4px 4px 0; }
 
-    body {
-      justify-content: flex-start;
-      padding: 4px 4px 0;
-      height: 100dvh;
-      height: 100vh; /* fallback */
-    }
-
-    #title {
-      font-size: clamp(0.5rem, 3vw, 1rem);
-      margin-bottom: 2px;
-      letter-spacing: 2px;
-    }
-
-    #hud {
-      gap: 4px 12px;
-      margin-bottom: 4px;
-      font-size: clamp(0.25rem, 2.2vw, 0.4rem);
-    }
-
-    #gameWrapper {
-      flex: 1 1 auto;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 0;
-      width: 100%;
-    }
-
-    #gameCanvas {
-      width: 100% !important;
-      height: 100% !important;
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-    }
-
-    #touchControls {
-      flex: 0 0 auto;
-      padding: 6px 8px 8px;
-      width: 100%;
-    }
-
-    .touch-btn {
-      width: 58px;
-      height: 58px;
-      font-size: 1.3rem;
-    }
-
-    .touch-btn.wide {
-      width: 76px;
-      font-size: 1rem;
-    }
+    #touchControls { flex: 0 0 auto; padding: 6px 8px 8px; width: 100%; }
+    .touch-btn { width: 58px; height: 58px; font-size: 1.3rem; }
+    .touch-btn.wide { width: 76px; font-size: 1rem; }
   }
 </style>
 </head>
@@ -251,6 +213,7 @@
   <div>⏱ <span id="timerDisplay">1:00</span></div>
   <div>AMMO: <span id="ammoDisplay">🔫—</span></div>
   <div>SQUASHIE: <span id="squashieDisplay">🍬—</span></div>
+  <div>WIG: <span id="wigDisplay">👶—</span></div>
 </div>
 <div id="gameWrapper">
 <canvas id="gameCanvas" width="800" height="450"></canvas>
@@ -322,6 +285,7 @@ function makeLlama(x, y) {
     gunAmmo: 0,
     shootCooldown: 0,
     squashiePower: 0,   // frames remaining of squashie powerup (added by TheMediocreLlama)
+    gingerWig: 0,       // frames remaining of ginger wig (added by Middors)
   };
 }
 
@@ -331,11 +295,9 @@ const GRAVITY = 0.55, JUMP_F = -12, MOVE_SPD = 3.5;
 // ── LEVEL DATA ─────────────────────────────────────────────────────────────
 function buildLevel(n) {
   const platforms = [
-    { x: 0,   y: 390, w: 800, h: 60, type: 'ground' },
+    { x: 0, y: 390, w: 800, h: 60, type: 'ground' },
   ];
-  const hazards   = [];
-  const enemies   = [];
-  const coins     = [];
+  const hazards = [], enemies = [], coins = [];
   let flagX = 720;
 
   if (n === 1) {
@@ -344,7 +306,7 @@ function buildLevel(n) {
       { x: 300, y: 250, w: 100, h: 16, type: 'plat' },
       { x: 460, y: 300, w: 100, h: 16, type: 'plat' },
       { x: 600, y: 240, w: 120, h: 16, type: 'plat' },
-      { x: 50,  y: 220, w:  80, h: 16, type: 'plat' },
+      { x:  50, y: 220, w:  80, h: 16, type: 'plat' },
     );
     hazards.push(
       { x: 220, y: 376, w: 24, h: 14, type: 'spike' },
@@ -355,11 +317,12 @@ function buildLevel(n) {
       makeEnemy(350, 340, 'walker'),
       makeEnemy(550, 280, 'walker'),
       makeEnemy(200, 290, 'patroller', 150, 250),
+      makeGinger(300, 180), makeGinger(500, 150),
     );
     coins.push(...coinRow(155, 295, 5), ...coinRow(305, 235, 4), ...coinRow(610, 225, 4));
-    enemies.push(makeGinger(300, 180), makeGinger(500, 150));
+
   } else if (n === 2) {
-    // Redesigned by AtomSmasher101 request — more space, wider platforms, gentler layout
+    // Redesigned by AtomSmasher101 — baby Jimmy (0.5 scale) appears
     platforms.push(
       { x:  60, y: 320, w: 130, h: 16, type: 'plat' },
       { x: 240, y: 280, w: 130, h: 16, type: 'plat' },
@@ -376,19 +339,20 @@ function buildLevel(n) {
       makeEnemy(280, 264, 'walker'),
       makeEnemy(460, 224, 'walker'),
       makeEnemy(620, 264, 'patroller', 590, 740),
+      makeGinger(200, 140), makeGinger(450, 110), makeGinger(620, 160),
+      makeJimmy(400, 390, 0.5),   // baby Jimmy
     );
     coins.push(...coinRow(70, 305, 5), ...coinRow(245, 265, 5), ...coinRow(475, 145, 5));
-    enemies.push(makeGinger(200, 140), makeGinger(450, 110), makeGinger(620, 160));
-    enemies.push(makeJimmy(550, 390));
     flagX = 730;
-  } else {
-    // level 3 — chaos
+
+  } else if (n === 3) {
+    // Chaos — two baby Jimmies (0.55 scale)
     platforms.push(
-      { x: 80,  y: 340, w: 70, h: 16, type: 'plat' },
-      { x: 210, y: 290, w: 70, h: 16, type: 'plat' },
-      { x: 340, y: 230, w: 70, h: 16, type: 'plat' },
-      { x: 470, y: 170, w: 70, h: 16, type: 'plat' },
-      { x: 570, y: 230, w: 70, h: 16, type: 'plat' },
+      { x:  80, y: 340, w:  70, h: 16, type: 'plat' },
+      { x: 210, y: 290, w:  70, h: 16, type: 'plat' },
+      { x: 340, y: 230, w:  70, h: 16, type: 'plat' },
+      { x: 470, y: 170, w:  70, h: 16, type: 'plat' },
+      { x: 570, y: 230, w:  70, h: 16, type: 'plat' },
       { x: 650, y: 300, w: 130, h: 16, type: 'plat' },
       { x: 200, y: 160, w:  60, h: 16, type: 'plat' },
       { x: 350, y: 110, w:  60, h: 16, type: 'plat' },
@@ -402,11 +366,67 @@ function buildLevel(n) {
       makeEnemy(580, 214, 'walker'),
       makeEnemy(660, 284, 'patroller', 650, 770),
       makeEnemy(100, 375, 'patroller', 50, 200),
+      makeGinger(150, 120), makeGinger(350, 80), makeGinger(520, 100), makeGinger(680, 130),
+      makeJimmy(250, 390, 0.55),  // baby Jimmy left
+      makeJimmy(560, 390, 0.55),  // baby Jimmy right
     );
     coins.push(...coinRow(215, 145, 3), ...coinRow(355, 95, 3), ...coinRow(475, 155, 3));
-    enemies.push(makeGinger(150, 120), makeGinger(350, 80), makeGinger(520, 100), makeGinger(680, 130));
-    enemies.push(makeJimmy(400, 390));
     flagX = 740;
+
+  } else if (n === 4) {
+    // Gauntlet — three baby Jimmies (0.65 scale), more platforms
+    platforms.push(
+      { x: 100, y: 330, w:  90, h: 16, type: 'plat' },
+      { x: 240, y: 270, w:  90, h: 16, type: 'plat' },
+      { x: 380, y: 210, w:  90, h: 16, type: 'plat' },
+      { x: 520, y: 260, w:  90, h: 16, type: 'plat' },
+      { x: 630, y: 310, w: 130, h: 16, type: 'plat' },
+      { x:  50, y: 210, w:  70, h: 16, type: 'plat' },
+      { x: 300, y: 150, w:  80, h: 16, type: 'plat' },
+      { x: 500, y: 130, w:  80, h: 16, type: 'plat' },
+    );
+    for (let sx = 160; sx < 640; sx += 70)
+      hazards.push({ x: sx, y: 376, w: 24, h: 14, type: 'spike' });
+    enemies.push(
+      makeEnemy(260, 254, 'walker'),
+      makeEnemy(400, 194, 'walker'),
+      makeEnemy(540, 244, 'walker'),
+      makeEnemy(660, 294, 'patroller', 630, 755),
+      makeGinger(120, 100), makeGinger(320, 80), makeGinger(510, 75), makeGinger(680, 100),
+      makeJimmy(200, 390, 0.65),
+      makeJimmy(420, 390, 0.65),
+      makeJimmy(620, 390, 0.65),
+    );
+    coins.push(...coinRow(105, 315, 4), ...coinRow(305, 135, 4), ...coinRow(505, 115, 4));
+    flagX = 740;
+
+  } else {
+    // Level 5 — THE REAL JIMMY. Full size, max chaos
+    platforms.push(
+      { x:  60, y: 340, w:  80, h: 16, type: 'plat' },
+      { x: 190, y: 280, w:  80, h: 16, type: 'plat' },
+      { x: 320, y: 220, w:  80, h: 16, type: 'plat' },
+      { x: 450, y: 160, w:  80, h: 16, type: 'plat' },
+      { x: 560, y: 220, w:  80, h: 16, type: 'plat' },
+      { x: 640, y: 290, w: 120, h: 16, type: 'plat' },
+      { x: 180, y: 160, w:  60, h: 16, type: 'plat' },
+      { x: 330, y: 100, w:  60, h: 16, type: 'plat' },
+    );
+    for (let sx = 120; sx < 700; sx += 65)
+      hazards.push({ x: sx, y: 376, w: 24, h: 14, type: 'spike' });
+    enemies.push(
+      makeEnemy(210, 264, 'walker'),
+      makeEnemy(340, 204, 'walker'),
+      makeEnemy(470, 144, 'walker'),
+      makeEnemy(580, 204, 'walker'),
+      makeEnemy(660, 274, 'patroller', 640, 755),
+      makeEnemy(100, 375, 'patroller', 50, 200),
+      makeGinger(150, 100), makeGinger(300, 70), makeGinger(460, 90),
+      makeGinger(580, 80), makeGinger(700, 110),
+      makeJimmy(380, 390, 1.0),   // ← THE REAL JIMMY
+    );
+    coins.push(...coinRow(185, 145, 3), ...coinRow(335, 85, 3), ...coinRow(455, 145, 3));
+    flagX = 745;
   }
 
   const flag = { x: flagX, y: 300, w: 20, h: 90 };
@@ -429,7 +449,13 @@ function buildLevel(n) {
       ? [{ x: 480, y: 272, w: 22, h: 22, collected: false }]
       : n === 2
       ? [{ x: 160, y: 162, w: 22, h: 22, collected: false }, { x: 630, y: 252, w: 22, h: 22, collected: false }]
-      : [{ x: 355, y: 82, w: 22, h: 22, collected: false }, { x: 575, y: 202, w: 22, h: 22, collected: false }]
+      : [{ x: 355, y: 82, w: 22, h: 22, collected: false }, { x: 575, y: 202, w: 22, h: 22, collected: false }],
+    // ── GINGER BABIES (added by Middors) ─────────────────────────────────
+    gingerBabies: n === 1
+      ? [{ x: 620, y: 358, w: 24, h: 28, collected: false }]
+      : n === 2
+      ? [{ x: 100, y: 292, w: 24, h: 28, collected: false }, { x: 480, y: 212, w: 24, h: 28, collected: false }]
+      : [{ x: 215, y: 262, w: 24, h: 28, collected: false }, { x: 470, y: 142, w: 24, h: 28, collected: false }]
   };
 }
 
@@ -467,20 +493,23 @@ function makeGinger(x, y) {
 }
 
 // ── JIMMY THE TWERKING FROG (added by Pratchetty) ─────────────────────────
-function makeJimmy(x, y) {
+function makeJimmy(x, y, scale = 1) {
+  const w = Math.round(64 * scale), h = Math.round(70 * scale);
   return {
-    x, y: y - 70, w: 64, h: 70,
+    x, y: y - h, w, h,
+    scale,
     vx: 0, vy: 0,
     type: 'jimmy',
-    patrolA: x - 180,
-    patrolB: x + 180,
+    patrolA: x - Math.round(180 * scale),
+    patrolB: x + Math.round(180 * scale),
     moveDir: 1,
     dead: false,
     deadTimer: 0,
-    hp: 5,
+    hp: Math.max(1, Math.round(5 * scale)),
+    maxHp: Math.max(1, Math.round(5 * scale)),
     frame: 0,
     frameTimer: 0,
-    twerk: 0,        // twerk oscillation timer
+    twerk: 0,
     twerkDir: 1,
     jumpTimer: 0,
     onGround: false,
@@ -521,7 +550,7 @@ function loadLevel() {
 
 function nextLevel() {
   level++;
-  if (level > 3) { winGame(); return; }
+  if (level > 5) { winGame(); return; }
   addTime(20 * 60); // +20s for reaching a flag
   loadLevel();
   state = 'playing';
@@ -589,6 +618,9 @@ function updateHUD() {
   document.getElementById('squashieDisplay').textContent = (llama && llama.squashiePower > 0)
     ? '🍬 ' + Math.ceil(llama.squashiePower / 60) + 's'
     : '🍬—';
+  document.getElementById('wigDisplay').textContent = (llama && llama.gingerWig > 0)
+    ? '👶 ' + Math.ceil(llama.gingerWig / 60) + 's'
+    : '👶—';
   const secs = Math.ceil(bombTimer / 60);
   const mins = Math.floor(secs / 60);
   const s    = secs % 60;
@@ -662,29 +694,19 @@ document.getElementById('overlay').addEventListener('touchstart', (e) => {
   else if (state === 'levelclear') nextLevel();
 }, { passive: false });
 
-// Scale canvas to fit screen while preserving aspect ratio
+// Scale canvas to fit wrapper (AtomSmasher101 — works on all screen sizes)
 function resizeCanvas() {
-  const canvas = document.getElementById('gameCanvas');
-  const isMobile = window.innerWidth <= 600;
-  if (!isMobile) {
-    // desktop — just cap at natural size
-    canvas.style.width  = '';
-    canvas.style.height = '';
-    return;
-  }
-  // on mobile: fit within the gameWrapper which has flex:1
+  const canvas  = document.getElementById('gameCanvas');
   const wrapper = document.getElementById('gameWrapper');
-  const wrapW = wrapper.clientWidth  || window.innerWidth;
-  const wrapH = wrapper.clientHeight || (window.innerHeight * 0.6);
-  const scaleW = wrapW  / 800;
-  const scaleH = wrapH  / 450;
-  const scale  = Math.min(scaleW, scaleH);
+  const wrapW   = wrapper.clientWidth;
+  const wrapH   = wrapper.clientHeight;
+  if (!wrapW || !wrapH) return;
+  const scale = Math.min(wrapW / 800, wrapH / 450);
   canvas.style.width  = Math.floor(800 * scale) + 'px';
   canvas.style.height = Math.floor(450 * scale) + 'px';
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
-// re-run after fonts/layout settle
 setTimeout(resizeCanvas, 200);
 
 function trySpit() {
@@ -768,6 +790,7 @@ function update() {
   const bullets = lvlData.bullets;
   const guns = lvlData.guns;
   const squashies = lvlData.squashies;
+  const gingerBabies = lvlData.gingerBabies;
   const left  = keys['ArrowLeft']  || keys['KeyA'];
   const right = keys['ArrowRight'] || keys['KeyD'];
   const jump  = keys['ArrowUp']    || keys['KeyW'] || keys['ArrowUp'];
@@ -1044,6 +1067,18 @@ function update() {
 
   if (llama.shootCooldown > 0) llama.shootCooldown--;
 
+  // — Ginger baby collectibles (added by Middors) —
+  for (const b of gingerBabies) {
+    if (!b.collected && rectsOverlap(llama, b)) {
+      b.collected = true;
+      llama.gingerWig = 600; // 10 seconds
+      score += 250; addTime(5 * 60); updateHUD();
+      spawnParticles(b.x + b.w/2, b.y + b.h/2, '#e8440a', 20);
+      spawnParticles(b.x + b.w/2, b.y + b.h/2, '#ffcc00', 10);
+    }
+  }
+  if (llama.gingerWig > 0) llama.gingerWig--;
+
   // — Flag (level end) —
   if (rectsOverlap(llama, { x: flag.x, y: flag.y, w: flag.w, h: flag.h })) {
     state = 'levelclear';
@@ -1289,8 +1324,74 @@ function draw() {
     ctx.shadowBlur = 0;
     ctx.restore();
   }
-  ctx.fillStyle = rbDark(90);
-  ctx.fillRect(f.x + 8, f.y, 4, f.h);
+  // Ginger baby collectibles (added by Middors)
+  for (const b of lvlData.gingerBabies) {
+    if (b.collected) continue;
+    const bob = Math.sin(frameCount * 0.09 + b.x) * 3;
+    ctx.save();
+    ctx.translate(b.x + b.w/2, b.y + b.h/2 + bob);
+
+    // glow
+    ctx.shadowBlur = 14; ctx.shadowColor = '#e8440a';
+
+    // nappy / body
+    ctx.fillStyle = '#fff8f0';
+    ctx.beginPath(); ctx.ellipse(0, 6, 10, 8, 0, 0, Math.PI*2); ctx.fill();
+    // nappy pin
+    ctx.fillStyle = '#88aaff';
+    ctx.beginPath(); ctx.arc(0, 6, 2, 0, Math.PI*2); ctx.fill();
+
+    // chubby torso
+    ctx.fillStyle = '#ffe0c0';
+    ctx.beginPath(); ctx.ellipse(0, -2, 8, 7, 0, 0, Math.PI*2); ctx.fill();
+
+    // little arms
+    ctx.fillStyle = '#ffe0c0';
+    ctx.beginPath(); ctx.ellipse(-10, 0, 4, 3, -0.4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 10, 0, 4, 3,  0.4, 0, Math.PI*2); ctx.fill();
+
+    // head
+    ctx.fillStyle = '#ffe0c0';
+    ctx.beginPath(); ctx.ellipse(0, -12, 9, 9, 0, 0, Math.PI*2); ctx.fill();
+
+    // GINGER HAIR (the whole point)
+    ctx.fillStyle = '#e8440a';
+    ctx.beginPath(); ctx.ellipse(0, -19, 7, 4, 0, 0, Math.PI*2); ctx.fill();
+    // wild ginger tufts
+    for (let t = -2; t <= 2; t++) {
+      ctx.beginPath();
+      ctx.moveTo(t * 3 - 1, -20);
+      ctx.lineTo(t * 3, -20 - 5 - Math.abs(t) * 1.5);
+      ctx.lineTo(t * 3 + 1, -20);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // eyes (big baby eyes)
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-3, -12, 3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 3, -12, 3, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#3a1a00';
+    ctx.beginPath(); ctx.arc(-3, -12, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 3, -12, 1.5, 0, Math.PI*2); ctx.fill();
+    // shine
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-2.2, -12.8, 0.8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 3.8, -12.8, 0.8, 0, Math.PI*2); ctx.fill();
+
+    // smile
+    ctx.strokeStyle = '#c06040'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(0, -10, 3, 0.2, Math.PI - 0.2); ctx.stroke();
+
+    // rosy cheeks
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#ff8888';
+    ctx.beginPath(); ctx.ellipse(-5, -10, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 5, -10, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
   const wave = Math.sin(frameCount * 0.1) * 4;
   ctx.fillStyle = rb(frameCount * 4);
   ctx.beginPath();
@@ -1504,6 +1605,32 @@ function drawLlama(l) {
   ctx.fillRect(x + w - 14, y - 7, 5, 8);
   ctx.fillRect(x + w - 8, y - 5, 4, 6);
 
+  // ── GINGER WIG (added by Middors) ─────────────────────────────────────
+  if (l.gingerWig > 0) {
+    const wigAlpha = l.gingerWig < 120 ? l.gingerWig / 120 : 1; // fade out last 2s
+    ctx.globalAlpha = wigAlpha;
+    ctx.fillStyle = '#e8440a';
+    // wig base covering the head
+    ctx.beginPath();
+    ctx.ellipse(x + w - 10, y - 2, 12, 7, 0, 0, Math.PI*2);
+    ctx.fill();
+    // wild ginger tufts sticking up
+    for (let t = 0; t < 5; t++) {
+      const tx = x + w - 20 + t * 5;
+      const th = 8 + Math.sin(frameCount * 0.15 + t) * 2;
+      ctx.beginPath();
+      ctx.moveTo(tx, y - 6);
+      ctx.lineTo(tx + 2, y - 6 - th);
+      ctx.lineTo(tx + 4, y - 6);
+      ctx.closePath(); ctx.fill();
+    }
+    // flowing side locks
+    ctx.fillStyle = '#c83200';
+    ctx.beginPath(); ctx.ellipse(x + w - 2, y + 2, 3, 7, 0.3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + w - 20, y + 2, 3, 6, -0.3, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
   // Eye
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(x + w - 10, y + 3, 3, 3);
@@ -1642,13 +1769,15 @@ function drawGinger(e) {
 function drawJimmy(e) {
   const x = e.x, y = e.y, w = e.w, h = e.h;
   const t = e.twerk;
+  const sc = e.scale || 1;
 
   // twerk: oscillate hips — upper body tilts opposite to lower
-  const hipSwing   = Math.sin(t * 2) * 10;   // degrees
+  const hipSwing   = Math.sin(t * 2) * 10;
   const bodySwing  = Math.sin(t * 2 + Math.PI) * 6;
 
   ctx.save();
   ctx.translate(x + w/2, y + h);
+  ctx.scale(sc, sc); // scale everything relative to full-size Jimmy
 
   // ── Lower body / butt (the twerker) ──
   ctx.save();
@@ -1755,19 +1884,19 @@ function drawJimmy(e) {
 
   // HP bar
   ctx.fillStyle = '#333';
-  ctx.fillRect(-28, -h - 12, 56, 7);
-  ctx.fillStyle = e.hp >= 4 ? '#22cc44' : e.hp >= 2 ? '#f5c542' : '#e74c3c';
-  ctx.fillRect(-28, -h - 12, (e.hp / 5) * 56, 7);
+  ctx.fillRect(-28, -h/sc - 12, 56, 7);
+  ctx.fillStyle = e.hp >= e.maxHp * 0.7 ? '#22cc44' : e.hp >= e.maxHp * 0.35 ? '#f5c542' : '#e74c3c';
+  ctx.fillRect(-28, -h/sc - 12, (e.hp / e.maxHp) * 56, 7);
   ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
-  ctx.strokeRect(-28, -h - 12, 56, 7);
+  ctx.strokeRect(-28, -h/sc - 12, 56, 7);
 
   // Name tag
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 10px "Press Start 2P", monospace';
+  ctx.font = `bold ${sc < 0.7 ? 8 : 10}px "Press Start 2P", monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
-  ctx.shadowBlur = 6; ctx.shadowColor = '#00ff88';
-  ctx.fillText('JIMMY', 0, -h - 14);
+  ctx.shadowBlur = 6; ctx.shadowColor = sc < 1 ? '#ffaa00' : '#00ff88';
+  ctx.fillText(sc < 1 ? 'baby jimmy' : 'JIMMY', 0, -h/sc - 14);
   ctx.shadowBlur = 0;
 
   ctx.restore();
