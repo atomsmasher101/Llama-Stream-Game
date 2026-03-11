@@ -88,12 +88,16 @@
 
   #overlay {
     position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 20px;
     text-align: center;
+    background: rgba(10, 10, 26, 0.82);
+    backdrop-filter: blur(2px);
+    z-index: 10;
   }
 
   #overlay h2 {
@@ -1251,6 +1255,7 @@ function updateHUD() {
 }
 
 // ── OVERLAY ──────────────────────────────────────────────────────────────────
+const _pageTitle = document.getElementById('title');
 function showOverlay(title, sub, cta) {
   overlay.style.display = 'flex';
   overlay.innerHTML = `
@@ -1258,8 +1263,15 @@ function showOverlay(title, sub, cta) {
     <p>${sub || ''}</p>
     ${cta ? `<p class="blink">${cta}</p>` : ''}
   `;
+  // Hide the persistent page-title header so it doesn't double up with the
+  // overlay's own <h2> (both showed "🦙 MEDIOCRE LLAMA LEAP 🦙" at the same
+  // time, making both unreadable).
+  if (_pageTitle) _pageTitle.style.visibility = 'hidden';
 }
-function hideOverlay() { overlay.style.display = 'none'; }
+function hideOverlay() {
+  overlay.style.display = 'none';
+  if (_pageTitle) _pageTitle.style.visibility = 'visible';
+}
 
 // ── INPUT ────────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
@@ -3344,32 +3356,41 @@ let _accumulator = 0;        // seconds of un-simulated time
 function loop(timestamp) {
   requestAnimationFrame(loop);   // schedule *before* work so we never miss a frame
 
+  // ── First-frame bootstrap ───────────────────────────────────────────────
+  // On the very first call, _lastTime is 0 which would produce a rawDelta
+  // equal to the page's uptime (~100-2000 ms), causing an instant burst of
+  // physics ticks.  Skip the first frame entirely to seed _lastTime cleanly.
+  if (_lastTime === 0) { _lastTime = timestamp; return; }
+
   // ── Delta-time calculation ──────────────────────────────────────────────
-  if (_lastTime === 0) { _lastTime = timestamp; }    // first frame bootstrap
   const rawDelta = (timestamp - _lastTime) * 0.001;  // ms → seconds
   _lastTime = timestamp;
 
   // ── Lag-spike protection ────────────────────────────────────────────────
-  // Clamp to MAX_DELTA.  This discards "debt" from long pauses / background
-  // tabs rather than letting the physics loop try to catch up all at once.
+  // If the tab was hidden or the device stalled, rawDelta can be several
+  // seconds.  Clamp it so the accumulator can never build up a backlog.
   const delta = Math.min(rawDelta, MAX_DELTA);
 
   if (paused) return;   // ESC-menu open: keep rAF alive but idle
 
   // ── Fixed-timestep accumulator ──────────────────────────────────────────
-  // Accumulate elapsed time then consume it in fixed-sized physics slices.
-  // Any remainder carries over to the next frame, so simulation time is
-  // never "lost" during normal play.
+  // This game uses integer-per-frame counters for ALL timing (GRAVITY, speeds,
+  // bombTimer--, invincible--, etc.).  Running update() more than once in a
+  // single render frame therefore literally doubles movement for that frame,
+  // which is what caused the "everything speeds up when moving" bug.
+  //
+  // Solution: allow AT MOST ONE physics step per render frame.
+  // • 60 Hz display  → 1 step/frame  → exactly 60 physics ticks/sec  ✓
+  // • 120 Hz display → ~1 step every 2 frames → still 60 ticks/sec   ✓
+  // • Lag spike      → 1 catch-up step maximum, then accumulator drains ✓
   _accumulator += delta;
 
-  // Safety valve: if somehow we still accumulated more than ~5 ticks (can
-  // happen after a very long pause even with the cap above), drain the excess
-  // so we never do more than 5 physics steps in one render frame.
-  if (_accumulator > FIXED_DT * 5) _accumulator = FIXED_DT * 5;
-
-  while (_accumulator >= FIXED_DT) {
-    update();                      // one physics/game-logic tick at 60-fps rate
+  if (_accumulator >= FIXED_DT) {
+    update();                      // exactly one physics tick per render frame
     _accumulator -= FIXED_DT;
+    // Drain any leftover debt so a slow frame can't cascade into a burst
+    // on the next frame.  Half a tick of carry-over is enough to stay in sync.
+    if (_accumulator > FIXED_DT) _accumulator = FIXED_DT * 0.5;
   }
 
   // ── Render at native refresh rate ──────────────────────────────────────
