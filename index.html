@@ -1135,7 +1135,9 @@ function startGame() {
   atomicExplosion = null;
   waffles = [];
   gummyBears = [];
+  particles = [];       // clear explosion/death particles so they don't bleed into the new game
   diarrheaTimer = 0;
+  screenShake = 0;
   deathsOnLevel = 0;
   simpleHero = null;
   loadLevel();
@@ -1454,6 +1456,8 @@ function update() {
     if (atomicExplosion.frame > 180) {
       atomicExplosion = null;
       state = 'gameover';
+      gameOverCount++;   // atomic path bypasses playerDie() so increment here,
+      deathsOnLevel++;   // otherwise drawMiddors indexes MIDDORS_SCOLDS[-1] → TypeError
       showOverlay('☢️ ATOMIC ANNIHILATION ☢️', `The llama is nuclear dust.<br>Score: ${score}`, 'PRESS ENTER TO RETRY');
     }
     return;
@@ -2572,9 +2576,6 @@ function draw() {
     drawSimpleHero(simpleHero);
   }
 
-  // ── MIDDORS game-over scold (added by AtomSmasher101) ──────────────────
-  if (state === 'gameover') drawMiddors();
-
   // ── ATOMIC EXPLOSION (added by Pratchetty) ────────────────────────────
   if (atomicExplosion) {
     const f = atomicExplosion.frame;
@@ -2650,6 +2651,12 @@ function draw() {
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
+
+  // ── MIDDORS game-over scold (added by AtomSmasher101) ──────────────────
+  // Drawn last so he appears on top of the atomic explosion screen.
+  // Also shown during the explosion animation (atomicExplosion is set) so he's
+  // visible the moment the screen darkens, not only after the state flips.
+  if (gameOverCount > 0 && (state === 'gameover' || atomicExplosion)) drawMiddors();
 
   ctx.restore();
 }
