@@ -1396,8 +1396,9 @@ function update() {
       if (e.frameTimer > 8) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
 
       if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
-        const stompZone = { x: e.x + 2, y: e.y, w: e.w - 4, h: 8 };
-        if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
+        const stompZone = { x: e.x, y: e.y, w: e.w, h: 20 };
+        const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
+        if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
           e.dead = true; e.deadTimer = 30;
           llama.vy = -8;
           score += 200; addTime(4 * 60); updateHUD();
@@ -1445,8 +1446,9 @@ function update() {
 
       // stomp check (needs 3 stomps to kill Jimmy)
       if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
-        const stompZone = { x: e.x + 4, y: e.y, w: e.w - 8, h: 10 };
-        if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
+        const stompZone = { x: e.x, y: e.y, w: e.w, h: 20 };
+        const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
+        if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
           e.hp--;
           llama.vy = -10;
           llama.invincible = 40;
@@ -1483,8 +1485,9 @@ function update() {
 
     // stomp check (skip during squashie power — handled separately)
     if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
-      const stompZone = { x: e.x + 2, y: e.y, w: e.w - 4, h: 8 };
-      if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
+      const stompZone = { x: e.x, y: e.y, w: e.w, h: 20 };
+      const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
+      if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
         e.dead = true; e.deadTimer = 30;
         llama.vy = -8;
         score += 100; addTime(3 * 60); updateHUD();
