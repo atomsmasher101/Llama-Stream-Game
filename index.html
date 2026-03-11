@@ -532,144 +532,258 @@ const TIMER_START = 60 * 60; // 60 seconds at 60fps
 let bombTimer = TIMER_START;
 let atomicExplosion = null; // { frame, x, y } when triggered
 
-// ── CHIPTUNE MUSIC ENGINE (added by Pratchetty) ────────────────────────────
+// ── CHIPTUNE MUSIC ENGINE (added by Pratchetty, extended by AtomSmasher101) ─
 const Music = (() => {
-  let ctx, masterGain, currentTrack = null, beatInterval = null;
-  let beat = 0, playing = false, trackName = '';
+  let ctx, masterGain;
+  let trackName = '', loopRunning = false, loopTimeout = null;
 
-  const BPM = 140;
-  const SPB = 60 / BPM;       // seconds per beat
-  const S16 = SPB / 4;        // 16th note duration
+  const BPM = 138;
+  const S16  = (60 / BPM) / 4;   // one sixteenth-note in seconds
 
-  // Note frequencies
-  const N = { C3:131,D3:147,E3:165,F3:175,G3:196,A3:220,B3:247,
-               C4:262,D4:294,E4:330,F4:349,G4:392,A4:440,B4:494,
-               C5:523,D5:587,E5:659,F5:698,G5:784,A5:880,
-               R:0 };
+  const R = 0;
+  // Frequencies
+  const f = {
+    B2:123, C3:131, D3:147, Eb3:156, E3:165, F3:175, G3:196, Ab3:208,
+    A3:220, Bb3:233, B3:247,
+    C4:262, D4:294, Eb4:311, E4:330, F4:349, G4:392, Ab4:415,
+    A4:440, Bb4:466, B4:494,
+    C5:523, D5:587, Eb5:622, E5:659, F5:698, G5:784, Ab5:830,
+    A5:880, Bb5:932,
+  };
 
-  // ── Main funky theme (32-beat loop) ──────────────────────────────────────
-  // Bass: funky two-bar groove
-  const BASS = [
-    N.C3,N.R,  N.C3,N.E3, N.G3,N.R,  N.C3,N.R,
-    N.C3,N.C3, N.R, N.G3, N.A3,N.R,  N.G3,N.E3,
-    N.F3,N.R,  N.F3,N.A3, N.C4,N.R,  N.F3,N.R,
-    N.G3,N.G3, N.R, N.D3, N.E3,N.R,  N.G3,N.R,
-  ];
-  // Lead melody — bright square wave
-  const LEAD = [
-    N.C5,N.R,  N.E5,N.R,  N.G5,N.E5, N.C5,N.R,
-    N.R, N.A4, N.C5,N.R,  N.G4,N.R,  N.A4,N.G4,
-    N.F4,N.R,  N.A4,N.R,  N.C5,N.A4, N.F4,N.R,
-    N.R, N.G4, N.A4,N.R,  N.E4,N.R,  N.G4,N.E4,
-  ];
-  // Harmony — slightly detuned for that chiptune chorus feel
-  const HARM = [
-    N.E5,N.R,  N.G5,N.R,  N.C5,N.G5, N.E5,N.R,
-    N.R, N.C5, N.E5,N.R,  N.B4,N.R,  N.C5,N.B4,
-    N.A4,N.R,  N.C5,N.R,  N.E5,N.C5, N.A4,N.R,
-    N.R, N.B4, N.C5,N.R,  N.G4,N.R,  N.B4,N.G4,
-  ];
-
-  // ── Boss tension theme (for when Jimmy is alive) ───────────────────────
-  const BOSS_BASS = [
-    N.C3,N.R,N.C3,N.R, N.G3,N.R,N.G3,N.R,
-    N.A3,N.R,N.A3,N.R, N.G3,N.R,N.R, N.R,
-    N.F3,N.R,N.F3,N.R, N.C3,N.R,N.C3,N.R,
-    N.D3,N.R,N.E3,N.R, N.G3,N.R,N.R, N.R,
-  ];
-  const BOSS_LEAD = [
-    N.C4,N.R,N.D4,N.R, N.E4,N.D4,N.C4,N.R,
-    N.B3,N.R,N.C4,N.R, N.G3,N.R,N.R, N.R,
-    N.A3,N.R,N.B3,N.R, N.C4,N.B3,N.A3,N.R,
-    N.G3,N.R,N.A3,N.R, N.C4,N.R,N.R, N.R,
-  ];
-
-  // ── Win fanfare (one-shot 16 beats) ───────────────────────────────────
-  const WIN = [
-    N.C4,N.E4,N.G4,N.C5, N.E5,N.G5,N.C5,N.G4,
-    N.A4,N.C5,N.E5,N.A5, N.G5,N.E5,N.C5,N.G4,
-  ];
-
-  // ── Death sting (one-shot 8 beats) ────────────────────────────────────
-  const DEATH = [
-    N.G4,N.F4,N.E4,N.D4, N.C4,N.B3,N.A3,N.R,
-  ];
-
+  // ── helpers ───────────────────────────────────────────────────────────────
   function init() {
     if (ctx) return;
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = ctx.createGain();
-    masterGain.gain.value = 0.18;
+    masterGain.gain.value = 0.06;
     masterGain.connect(ctx.destination);
   }
 
-  function makeOsc(type, freq, vol, start, dur, detune = 0) {
-    if (!freq || freq === N.R) return;
-    const osc  = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    if (detune) osc.detune.value = detune;
-    gain.gain.setValueAtTime(vol, start);
-    gain.gain.exponentialRampToValueAtTime(0.001, start + dur * 0.85);
-    osc.connect(gain);
-    gain.connect(masterGain);
-    osc.start(start);
-    osc.stop(start + dur);
+  function osc(type, freq, vol, t, dur, detune = 0) {
+    if (!freq) return;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    if (detune) o.detune.value = detune;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.88);
+    o.connect(g); g.connect(masterGain);
+    o.start(t); o.stop(t + dur);
   }
 
-  function makeNoise(vol, start, dur) {
-    // White noise burst for snare/hi-hat
-    const buf  = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    const src  = ctx.createBufferSource();
-    const gain = ctx.createGain();
+  function noise(vol, t, dur) {
+    const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate);
+    const d   = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    const g   = ctx.createGain();
     src.buffer = buf;
-    gain.gain.setValueAtTime(vol, start);
-    gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
-    src.connect(gain);
-    gain.connect(masterGain);
-    src.start(start);
-    src.stop(start + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(g); g.connect(masterGain);
+    src.start(t); src.stop(t + dur);
   }
 
-  function scheduleBar(barStart, bassNotes, leadNotes, harmNotes, isBoss) {
-    for (let i = 0; i < 32; i++) {
-      const t = barStart + i * S16;
-      // Bass — square wave, low
-      makeOsc('square', bassNotes[i], 0.5, t, S16 * 1.8);
-      // Lead — square wave
-      makeOsc('square', leadNotes[i], 0.35, t, S16 * 0.9);
-      // Harmony — sawtooth slightly detuned
-      if (harmNotes) makeOsc('sawtooth', harmNotes[i], 0.15, t, S16 * 0.85, 8);
-      // Drums every 8th beat = kick (sine thump) / snare on 2&4
-      if (i % 8 === 0) makeOsc('sine', 80, 0.8, t, S16 * 3);    // kick
-      if (i % 16 === 8) makeNoise(0.12, t, S16 * 1.5);           // snare
-      if (i % 4 === 2)  makeNoise(0.04, t, S16 * 0.4);           // hi-hat
+  // Schedule one 32-step section starting at absolute time `t0`
+  // opts: { bass, lead, harm, harm2, drums, bassVol, leadVol }
+  function section(t0, opts) {
+    const { bass, lead, harm, harm2, drums = true, bassVol = 0.48, leadVol = 0.32 } = opts;
+    const len = bass.length;
+    for (let i = 0; i < len; i++) {
+      const t = t0 + i * S16;
+      if (bass[i])  osc('square',   bass[i],  bassVol,      t, S16 * 1.9);
+      if (lead[i])  osc('square',   lead[i],  leadVol,      t, S16 * 0.88);
+      if (harm  && harm[i])  osc('sawtooth', harm[i],  0.13, t, S16 * 0.82,  7);
+      if (harm2 && harm2[i]) osc('sawtooth', harm2[i], 0.09, t, S16 * 0.78, -9);
+      if (drums) {
+        // kick on 1 & 3 (steps 0, 16)
+        if (i % 16 === 0)  { osc('sine', 90, 0.75, t, S16*3); osc('sine', 55, 0.5, t, S16*2.5); }
+        // snare on 2 & 4  (steps 8, 24)
+        if (i % 16 === 8)  noise(0.13, t, S16 * 1.4);
+        // open hi-hat every 8th  (steps 4, 12, 20, 28)
+        if (i % 8 === 4)   noise(0.05, t, S16 * 0.8);
+        // closed hi-hat every 4th off the grid
+        if (i % 4 === 2)   noise(0.028, t, S16 * 0.35);
+      }
     }
   }
 
-  let loopTimeout = null;
-  let loopRunning = false;
+  // ── MAIN THEME — 8 sections × 32 steps ≈ 27 seconds ─────────────────────
+  //
+  //  Key of C major / A minor, funky platformer feel
+  //
+  //  Section layout:
+  //   0  INTRO      — bass only, no melody, drum build
+  //   1  VERSE A    — main groove, simple lead
+  //   2  VERSE A'   — same groove, lead variation
+  //   3  CHORUS     — big lead + harmony, punchy
+  //   4  BRIDGE     — minor feel, eerie, sparse drums
+  //   5  VERSE B    — funkier bass, lead call-response
+  //   6  CHORUS 2   — chorus with extra harmony layer
+  //   7  OUTRO      — breakdown, bass + drums only, builds back up
+
+  // --- Basslines ---
+  const bA = [  // main verse groove (C major)
+    f.C3,R,    f.C3,f.E3, f.G3,R,    f.C3,R,
+    f.C3,f.C3, R,   f.G3, f.A3,R,    f.G3,f.E3,
+    f.F3,R,    f.F3,f.A3, f.C4,R,    f.F3,R,
+    f.G3,f.G3, R,   f.D3, f.E3,R,    f.G3,R,
+  ];
+  const bB = [  // funkier bridge bass (A minor)
+    f.A3,R,    f.A3,R,    f.G3,R,    f.A3,f.C4,
+    f.D4,R,    f.C4,R,    f.A3,R,    f.G3,R,
+    f.F3,R,    f.F3,R,    f.E3,R,    f.F3,f.G3,
+    f.A3,R,    f.G3,R,    f.E3,R,    f.A3,R,
+  ];
+  const bBridge = [  // minor tension (A minor)
+    f.A3,R,    R,   f.A3, f.E3,R,    R,   f.G3,
+    f.A3,R,    R,   f.C4, f.B3,R,    R,   f.A3,
+    f.F3,R,    R,   f.F3, f.C4,R,    R,   f.Eb3,
+    f.F3,R,    f.G3,R,   f.Ab3,R,   f.G3, f.E3,
+  ];
+  const bOutro = [  // sparse breakdown
+    f.C3,R,    R,   R,    f.G3,R,    R,   R,
+    f.C3,R,    R,   R,    f.A3,R,    R,   R,
+    f.F3,R,    R,   R,    f.C4,R,    R,   R,
+    f.G3,R,    R,   R,    f.G3,R,    f.E3,f.D3,
+  ];
+
+  // --- Lead melodies ---
+  const lVA = [  // verse A lead
+    f.C5,R,    f.E5,R,    f.G5,f.E5, f.C5,R,
+    R,   f.A4, f.C5,R,    f.G4,R,    f.A4,f.G4,
+    f.F4,R,    f.A4,R,    f.C5,f.A4, f.F4,R,
+    R,   f.G4, f.A4,R,    f.E4,R,    f.G4,f.E4,
+  ];
+  const lVA2 = [  // verse A variation
+    f.E5,R,    f.G5,R,    f.A5,f.G5, f.E5,R,
+    R,   f.C5, f.E5,R,    f.B4,R,    f.C5,f.B4,
+    f.A4,R,    f.C5,R,    f.E5,f.C5, f.A4,R,
+    R,   f.B4, f.C5,R,    f.G4,R,    f.A4,f.G4,
+  ];
+  const lChorus = [  // chorus — bold punchy
+    f.G5,R,    f.G5,f.E5, f.C5,f.E5, f.G5,R,
+    f.A5,R,    f.G5,R,    f.E5,f.D5, f.C5,R,
+    f.F5,R,    f.F5,f.D5, f.Bb4,R,   f.C5,R,
+    f.G4,f.A4, f.C5,f.E5, f.G5,f.E5, f.C5,R,
+  ];
+  const lBridge = [  // eerie bridge melody
+    f.A4,R,    R,   f.C5, f.B4,R,    R,   f.A4,
+    f.G4,R,    R,   R,    f.A4,R,    f.G4,f.E4,
+    f.F4,R,    R,   f.Ab4,f.G4,R,    R,   f.F4,
+    f.E4,R,    f.F4,f.G4, f.A4,R,    R,   R,
+  ];
+  const lVB = [  // verse B — call & response
+    f.C5,f.E5, f.G5,R,    R,   f.E5, f.D5,f.C5,
+    f.A4,R,    f.C5,f.E5, f.G5,R,    R,   f.A4,
+    f.F4,f.A4, f.C5,R,    R,   f.A4, f.G4,f.F4,
+    f.E4,R,    f.G4,f.B4, f.C5,f.B4, f.A4,R,
+  ];
+  const lOutro = [  // stripped back outro — just a motif
+    f.C5,R,    R,   R,    f.G4,R,    f.A4,R,
+    f.C5,R,    R,   R,    f.E5,R,    R,   R,
+    f.F4,R,    R,   R,    f.G4,R,    f.A4,R,
+    f.C5,f.B4, f.A4,f.G4, f.E4,R,    R,   R,
+  ];
+
+  // --- Harmonies ---
+  const hChorus = [  // chorus harmony (3rds above lead)
+    f.E5,R,    f.E5,f.C5, f.E5,f.C5, f.E5,R,
+    f.C5,R,    f.E5,R,    f.C5,f.B4, f.E5,R,
+    f.A4,R,    f.A4,f.F4, f.D5,R,    f.E5,R,
+    f.B4,f.C5, f.E5,f.G5, f.E5,f.C5, f.E5,R,
+  ];
+  const hChorus2 = [  // extra layer for chorus 2 (5ths)
+    f.C5,R,    f.C5,f.G4, f.G4,f.G4, f.C5,R,
+    f.E5,R,    f.C5,R,    f.G4,f.F4, f.C5,R,
+    f.C5,R,    f.C5,f.Bb4,f.F4,R,    f.G4,R,
+    f.G4,f.E4, f.G4,f.C5, f.C5,f.G4, f.G4,R,
+  ];
+
+  // ── Full main song: array of section descriptors ────────────────────────
+  const SONG = [
+    // 0 INTRO — bass + drums only
+    { bass: bA,      lead: bA.map(()=>R), drums: true,  bassVol: 0.42, leadVol: 0 },
+    // 1 VERSE A
+    { bass: bA,      lead: lVA,           harm: null,   drums: true  },
+    // 2 VERSE A'
+    { bass: bA,      lead: lVA2,          harm: null,   drums: true  },
+    // 3 CHORUS
+    { bass: bA,      lead: lChorus,       harm: hChorus, drums: true },
+    // 4 BRIDGE — minor, sparse
+    { bass: bBridge, lead: lBridge,       harm: null,   drums: false },
+    // 5 VERSE B — funkier
+    { bass: bB,      lead: lVB,           harm: null,   drums: true  },
+    // 6 CHORUS 2 — full fat with two harmonies
+    { bass: bA,      lead: lChorus,       harm: hChorus, harm2: hChorus2, drums: true },
+    // 7 OUTRO — breakdown then build
+    { bass: bOutro,  lead: lOutro,        harm: null,   drums: true, bassVol: 0.38 },
+  ];
+
+  // ── BOSS THEME — 4 sections × 32 steps ≈ 14 seconds ─────────────────────
+  //  Minor key, driving, menacing
+  const bossB1 = [
+    f.A3,R, f.A3,R, f.E3,R, f.A3,f.C4,
+    f.D4,R, f.C4,R, f.A3,R, f.G3,R,
+    f.F3,R, f.F3,R, f.E3,R, f.F3,f.G3,
+    f.A3,R, f.G3,R, f.E3,R, f.A3,R,
+  ];
+  const bossB2 = [
+    f.A3,R, f.B3,R, f.C4,R, f.B3,f.A3,
+    f.G3,R, f.A3,R, f.E3,R, f.D3,R,
+    f.F3,R, f.G3,R, f.Ab3,R, f.G3,f.F3,
+    f.E3,R, f.F3,R, f.G3,R, f.A3,R,
+  ];
+  const bossL1 = [
+    f.A4,R, f.C5,f.B4, f.A4,R, f.G4,R,
+    f.F4,R, f.E4,f.F4, f.G4,R, f.A4,R,
+    f.C5,R, f.B4,f.A4, f.G4,R, f.Ab4,R,
+    f.A4,R, f.G4,f.E4, f.F4,R, f.E4,R,
+  ];
+  const bossL2 = [
+    f.E5,R, f.Eb5,R, f.D5,f.C5, f.B4,R,
+    f.A4,R, f.C5,R,  f.E5,f.D5, f.C5,R,
+    f.F4,R, f.Ab4,R, f.G4,f.F4, f.Eb4,R,
+    f.E4,R, f.F4,R,  f.G4,f.A4, f.B4,R,
+  ];
+  const BOSS_SONG = [
+    { bass: bossB1, lead: bossL1, drums: true  },
+    { bass: bossB2, lead: bossL2, drums: true  },
+    { bass: bossB1, lead: bossL2, drums: true  },
+    { bass: bossB2, lead: bossL1, drums: true  },
+  ];
+
+  // ── Win fanfare ──────────────────────────────────────────────────────────
+  const WIN   = [f.C4,f.E4,f.G4,f.C5, f.E5,f.G5,f.C5,f.G4,
+                 f.A4,f.C5,f.E5,f.A5, f.G5,f.E5,f.C5,f.G4];
+  // ── Death sting ─────────────────────────────────────────────────────────
+  const DEATH = [f.G4,f.F4,f.E4,f.D4, f.C4,f.B3,f.A3,R];
+
+  // ── Scheduler ───────────────────────────────────────────────────────────
+  let sectionIdx = 0;
+
+  function scheduleSong(t0, song) {
+    const s = song[sectionIdx % song.length];
+    section(t0, s);
+    return S16 * 32; // return duration of this section
+  }
 
   function startLoop(name) {
     if (trackName === name && loopRunning) return;
     stopLoop();
     trackName = name;
     loopRunning = true;
-    playing = true;
+    sectionIdx = 0;
 
     function tick() {
       if (!loopRunning) return;
-      const now = ctx.currentTime;
-      const barDur = S16 * 32;
-      if (name === 'boss') {
-        scheduleBar(now, BOSS_BASS, BOSS_LEAD, null, true);
-      } else {
-        scheduleBar(now, BASS, LEAD, HARM, false);
-      }
-      loopTimeout = setTimeout(tick, barDur * 1000 - 50);
+      const now  = ctx.currentTime;
+      const song = name === 'boss' ? BOSS_SONG : SONG;
+      const dur  = scheduleSong(now, song);
+      sectionIdx++;
+      loopTimeout = setTimeout(tick, dur * 1000 - 30);
     }
     tick();
   }
@@ -685,8 +799,9 @@ const Music = (() => {
     const now = ctx.currentTime;
     for (let i = 0; i < notes.length; i++) {
       const t = now + i * S16 * 2;
-      makeOsc('square', notes[i], 0.4 * volMult, t, S16 * 1.6);
-      if (notes[i] && i % 2 === 0) makeOsc('sine', notes[i] / 2, 0.3 * volMult, t, S16 * 2);
+      osc('square',  notes[i], 0.4 * volMult, t, S16 * 1.6);
+      if (notes[i] && i % 2 === 0)
+        osc('sine', notes[i] / 2, 0.28 * volMult, t, S16 * 2);
     }
   }
 
@@ -695,7 +810,7 @@ const Music = (() => {
     play(name) {
       init();
       if (ctx.state === 'suspended') ctx.resume();
-      if (name === 'win')   { oneShot(WIN,  1.2); return; }
+      if (name === 'win')   { oneShot(WIN,   1.2); return; }
       if (name === 'death') { oneShot(DEATH, 0.9); return; }
       startLoop(name);
     },
