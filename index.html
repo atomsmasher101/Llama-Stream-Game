@@ -107,7 +107,9 @@
   /* ── MOBILE (added by Pratchetty) ───────────────────────────────────────── */
   #gameWrapper {
     position: relative;
-    display: inline-block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     touch-action: none;
   }
 
@@ -178,8 +180,64 @@
   @media (max-width: 600px) {
     #touchControls { display: flex; }
     #controls { display: none; }
-    #gameCanvas { max-height: 52vh; }
-    body { justify-content: flex-start; padding-top: 6px; overflow-y: auto; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      justify-content: flex-start;
+      padding: 4px 4px 0;
+      height: 100dvh;
+      height: 100vh; /* fallback */
+    }
+
+    #title {
+      font-size: clamp(0.5rem, 3vw, 1rem);
+      margin-bottom: 2px;
+      letter-spacing: 2px;
+    }
+
+    #hud {
+      gap: 4px 12px;
+      margin-bottom: 4px;
+      font-size: clamp(0.25rem, 2.2vw, 0.4rem);
+    }
+
+    #gameWrapper {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+      width: 100%;
+    }
+
+    #gameCanvas {
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    #touchControls {
+      flex: 0 0 auto;
+      padding: 6px 8px 8px;
+      width: 100%;
+    }
+
+    .touch-btn {
+      width: 58px;
+      height: 58px;
+      font-size: 1.3rem;
+    }
+
+    .touch-btn.wide {
+      width: 76px;
+      font-size: 1rem;
+    }
   }
 </style>
 </head>
@@ -607,17 +665,27 @@ document.getElementById('overlay').addEventListener('touchstart', (e) => {
 // Scale canvas to fit screen while preserving aspect ratio
 function resizeCanvas() {
   const canvas = document.getElementById('gameCanvas');
+  const isMobile = window.innerWidth <= 600;
+  if (!isMobile) {
+    // desktop — just cap at natural size
+    canvas.style.width  = '';
+    canvas.style.height = '';
+    return;
+  }
+  // on mobile: fit within the gameWrapper which has flex:1
   const wrapper = document.getElementById('gameWrapper');
-  const maxW = window.innerWidth;
-  const maxH = window.innerHeight * (window.innerWidth <= 600 ? 0.52 : 0.65);
-  const scaleW = maxW / 800;
-  const scaleH = maxH / 450;
-  const scale  = Math.min(scaleW, scaleH, 1);
+  const wrapW = wrapper.clientWidth  || window.innerWidth;
+  const wrapH = wrapper.clientHeight || (window.innerHeight * 0.6);
+  const scaleW = wrapW  / 800;
+  const scaleH = wrapH  / 450;
+  const scale  = Math.min(scaleW, scaleH);
   canvas.style.width  = Math.floor(800 * scale) + 'px';
   canvas.style.height = Math.floor(450 * scale) + 'px';
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
+// re-run after fonts/layout settle
+setTimeout(resizeCanvas, 200);
 
 function trySpit() {
   if (llama.spitCooldown > 0) return;
@@ -769,7 +837,7 @@ function update() {
       e.frameTimer++;
       if (e.frameTimer > 8) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
 
-      if (llama.invincible <= 0 && rectsOverlap(llama, e)) {
+      if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
         const stompZone = { x: e.x + 2, y: e.y, w: e.w - 4, h: 8 };
         if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
           e.dead = true; e.deadTimer = 30;
@@ -818,7 +886,7 @@ function update() {
       if (e.frameTimer > 6) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
 
       // stomp check (needs 3 stomps to kill Jimmy)
-      if (llama.invincible <= 0 && rectsOverlap(llama, e)) {
+      if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
         const stompZone = { x: e.x + 4, y: e.y, w: e.w - 8, h: 10 };
         if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
           e.hp--;
