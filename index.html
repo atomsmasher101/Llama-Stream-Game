@@ -1396,7 +1396,7 @@ function update() {
       if (e.frameTimer > 8) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
 
       if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
-        const stompZone = { x: e.x, y: e.y, w: e.w, h: 20 };
+        const stompZone = { x: e.x, y: e.y, w: e.w, h: Math.max(20, e.h * 0.4) };
         const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
         if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
           e.dead = true; e.deadTimer = 30;
@@ -1446,7 +1446,7 @@ function update() {
 
       // stomp check (needs 3 stomps to kill Jimmy)
       if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
-        const stompZone = { x: e.x, y: e.y, w: e.w, h: 20 };
+        const stompZone = { x: e.x, y: e.y, w: e.w, h: Math.max(20, e.h * 0.4) };
         const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
         if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
           e.hp--;
@@ -1485,7 +1485,7 @@ function update() {
 
     // stomp check (skip during squashie power — handled separately)
     if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
-      const stompZone = { x: e.x, y: e.y, w: e.w, h: 20 };
+      const stompZone = { x: e.x, y: e.y, w: e.w, h: Math.max(20, e.h * 0.4) };
       const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
       if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
         e.dead = true; e.deadTimer = 30;
