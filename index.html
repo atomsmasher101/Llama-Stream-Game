@@ -548,9 +548,11 @@ function update() {
     return;
   }
 
-  const { platforms, hazards, enemies, coins, flag, spits } = lvlData;
-
-  // — Llama movement —
+  const { platforms, hazards, enemies, coins, flag } = lvlData;
+  const spits = lvlData.spits;
+  const bullets = lvlData.bullets;
+  const guns = lvlData.guns;
+  const squashies = lvlData.squashies;
   const left  = keys['ArrowLeft']  || keys['KeyA'];
   const right = keys['ArrowRight'] || keys['KeyD'];
   const jump  = keys['ArrowUp']    || keys['KeyW'] || keys['ArrowUp'];
@@ -760,7 +762,7 @@ function update() {
   }
 
   // — Gun pickups (added by Pratchetty) —
-  for (const g of lvlData.guns) {
+  for (const g of guns) {
     if (!g.collected && rectsOverlap(llama, g)) {
       g.collected = true;
       llama.gunAmmo = Math.min((llama.gunAmmo || 0) + 3, 9);
@@ -770,7 +772,7 @@ function update() {
   }
 
   // — Squashie powerup (added by TheMediocreLlama) —
-  for (const s of lvlData.squashies) {
+  for (const s of squashies) {
     if (!s.collected && rectsOverlap(llama, s)) {
       s.collected = true;
       llama.squashiePower = 600; // 10 seconds of pure power
@@ -782,7 +784,7 @@ function update() {
   if (llama.squashiePower > 0) {
     llama.squashiePower--;
     // While powered up: touching enemies kills them instead of you
-    for (const e of lvlData.enemies) {
+    for (const e of enemies) {
       if (!e.dead && rectsOverlap(llama, e)) {
         if (e.type === 'jimmy') {
           e.hp = 0; e.dead = true; e.deadTimer = 60;
@@ -798,13 +800,13 @@ function update() {
   }
 
   // — Bullets (added by Pratchetty) —
-  for (let i = lvlData.bullets.length - 1; i >= 0; i--) {
-    const b = lvlData.bullets[i];
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
     b.x += b.vx;
     b.life--;
-    if (b.life <= 0 || b.x < 0 || b.x > W) { lvlData.bullets.splice(i, 1); continue; }
+    if (b.life <= 0 || b.x < 0 || b.x > W) { bullets.splice(i, 1); continue; }
     let hit = false;
-    for (const e of lvlData.enemies) {
+    for (const e of enemies) {
       if (!e.dead && rectsOverlap(b, { x: e.x, y: e.y, w: e.w, h: e.h })) {
         if (e.type === 'jimmy') {
           e.hp--;
@@ -822,7 +824,7 @@ function update() {
         hit = true; break;
       }
     }
-    if (hit) { lvlData.bullets.splice(i, 1); }
+    if (hit) { bullets.splice(i, 1); }
   }
 
   if (llama.shootCooldown > 0) llama.shootCooldown--;
