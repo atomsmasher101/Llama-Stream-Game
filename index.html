@@ -218,7 +218,7 @@
 <div id="gameWrapper">
 <canvas id="gameCanvas" width="800" height="450"></canvas>
 </div>
-<div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗 &nbsp;|&nbsp; G / F — SHOOT 🔫</div>
+<div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗 &nbsp;|&nbsp; G / F — SHOOT 🔫 &nbsp;|&nbsp; M — MUTE 🔇</div>
 
 <!-- Touch controls (added by Pratchetty) -->
 <div id="touchControls">
@@ -230,6 +230,7 @@
     <button class="touch-btn wide" id="btn-spit">🫗 SPIT</button>
     <button class="touch-btn wide" id="btn-shoot">🔫 FIRE</button>
     <button class="touch-btn" id="btn-jump">▲ JUMP</button>
+    <button class="touch-btn" id="btn-mute">🔊</button>
   </div>
 </div>
 
@@ -987,6 +988,23 @@ bindTouchBtn('btn-right', 'ArrowRight');
 bindTouchBtn('btn-jump',  'ArrowUp');
 bindTouchBtn('btn-spit',  null, () => { if (state === 'playing') trySpit(); });
 bindTouchBtn('btn-shoot', null, () => { if (state === 'playing') tryShoot(); });
+
+// ── MUTE (added by AtomSmasher101) ────────────────────────────────────────
+let muted = false;
+function toggleMute() {
+  muted = !muted;
+  Music.setVolume(muted ? 0 : 0.06);
+  const btn = document.getElementById('btn-mute');
+  if (btn) btn.textContent = muted ? '🔇' : '🔊';
+}
+document.addEventListener('keydown', e => {
+  if (e.code === 'KeyM') toggleMute();
+});
+const muteBtn = document.getElementById('btn-mute');
+if (muteBtn) {
+  muteBtn.addEventListener('click', toggleMute);
+  muteBtn.addEventListener('touchstart', e => { e.preventDefault(); toggleMute(); }, { passive: false });
+}
 
 // Tap overlay to start/continue on mobile
 document.getElementById('overlay').addEventListener('touchstart', (e) => {
