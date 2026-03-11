@@ -66,11 +66,17 @@
     box-shadow: 0 0 30px rgba(245, 197, 66, 0.4), inset 0 0 30px rgba(0,0,0,0.5);
     display: block;
     image-rendering: pixelated;
+    image-rendering: crisp-edges; /* Firefox fallback */
     animation: rainbowBorder 1s linear infinite;
     max-width: 100%;
     max-height: 100%;
     width: auto;
     height: auto;
+    /* Mobile GPU-layer hint: promotes the canvas to its own compositor layer so
+       the browser does not have to re-composite the whole page every frame */
+    will-change: transform;
+    /* Eliminate the 300 ms touch-delay on older mobile browsers */
+    touch-action: manipulation;
   }
 
   @keyframes rainbowBorder {
@@ -165,6 +171,10 @@
     -webkit-tap-highlight-color: transparent;
     transition: background 0.08s, transform 0.08s;
     backdrop-filter: blur(4px);
+    /* Eliminate 300 ms tap delay and prevent accidental scroll-swallowing */
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .touch-btn:active, .touch-btn.pressed {
@@ -387,9 +397,24 @@
 
 <script>
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+// ── MOBILE CANVAS OPTIMISATIONS ───────────────────────────────────────────
+// alpha:false   → skip per-pixel alpha compositing (background is always drawn solid)
+// desynchronized → hint to browser it may present without waiting for the compositor
+const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const overlay = document.getElementById('overlay');
 const W = canvas.width, H = canvas.height;
+
+// Respect device pixel ratio so the canvas is crisp on retina / high-DPR mobile
+// screens while keeping the *logical* resolution at 800×450.
+(function applyDPR() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap at 2× to save VRAM
+  if (dpr <= 1) return;
+  canvas.width  = 800 * dpr;
+  canvas.height = 450 * dpr;
+  canvas.style.width  = '800px';   // CSS logical size — resizeCanvas() will override
+  canvas.style.height = '450px';
+  ctx.scale(dpr, dpr);             // draw as if canvas were still 800×450
+})();
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 let state = 'title'; // title | playing | dead | win
@@ -1355,6 +1380,7 @@ document.getElementById('overlay').addEventListener('touchstart', (e) => {
 }, { passive: false });
 
 // Scale canvas to fit wrapper (AtomSmasher101 — works on all screen sizes)
+// Updated for DPR-aware buffer: CSS size always uses logical 800×450 ratios
 function resizeCanvas() {
   const canvas  = document.getElementById('gameCanvas');
   const wrapper = document.getElementById('gameWrapper');
@@ -1362,6 +1388,8 @@ function resizeCanvas() {
   const wrapH   = wrapper.clientHeight;
   if (!wrapW || !wrapH) return;
   const scale = Math.min(wrapW / 800, wrapH / 450);
+  // Set CSS display size (logical pixels) — the GPU buffer may be larger (DPR)
+  // but the browser will scale it down cleanly via image-rendering: pixelated
   canvas.style.width  = Math.floor(800 * scale) + 'px';
   canvas.style.height = Math.floor(450 * scale) + 'px';
 }
@@ -3290,25 +3318,75 @@ function drawEnemy(e) {
   }
 }
 
-// ── GAME LOOP ─────────────────────────────────────────────────────────────
-let _lastTrack = '';
-function loop() {
-  if (!paused) {
-    update();
-    draw();
-    if (state === 'playing') {
-      const t = getTrackForState();
-      if (t !== _lastTrack) { _lastTrack = t; Music.play(t); }
-    } else if (state !== 'dead') {
-      _lastTrack = '';
-    }
+// ── GAME LOOP — delta-time / fixed-timestep engine ────────────────────────
+//
+//  Architecture:
+//    • Physics runs at a *fixed* 1/60 s tick (FIXED_DT) so gameplay constants
+//      (GRAVITY, JUMP_F, speeds, timer counts) need zero changes — they were all
+//      authored at 60 fps and remain exactly correct.
+//    • render() fires every animation frame at the display's native refresh rate
+//      (60 Hz, 90 Hz, 120 Hz, 144 Hz …).  Visuals are always fresh even on
+//      high-refresh screens.
+//    • If the browser stalls (background tab, GC pause, system sleep) the raw
+//      delta is clamped to MAX_DELTA before it reaches the accumulator so a
+//      single 2-second freeze cannot cause dozens of physics ticks in one burst
+//      ("spiral of death").
+//    • While paused, rAF still runs but neither update nor draw are called,
+//      keeping CPU usage near zero.
+//
+const FIXED_DT  = 1 / 60;   // one logical game tick in seconds (matches original 60-fps assumptions)
+const MAX_DELTA = 0.1;       // lag-spike cap: ignore anything beyond ~6 missed frames
+
+let _lastTrack  = '';
+let _lastTime   = 0;         // performance.now() of the previous frame
+let _accumulator = 0;        // seconds of un-simulated time
+
+function loop(timestamp) {
+  requestAnimationFrame(loop);   // schedule *before* work so we never miss a frame
+
+  // ── Delta-time calculation ──────────────────────────────────────────────
+  if (_lastTime === 0) { _lastTime = timestamp; }    // first frame bootstrap
+  const rawDelta = (timestamp - _lastTime) * 0.001;  // ms → seconds
+  _lastTime = timestamp;
+
+  // ── Lag-spike protection ────────────────────────────────────────────────
+  // Clamp to MAX_DELTA.  This discards "debt" from long pauses / background
+  // tabs rather than letting the physics loop try to catch up all at once.
+  const delta = Math.min(rawDelta, MAX_DELTA);
+
+  if (paused) return;   // ESC-menu open: keep rAF alive but idle
+
+  // ── Fixed-timestep accumulator ──────────────────────────────────────────
+  // Accumulate elapsed time then consume it in fixed-sized physics slices.
+  // Any remainder carries over to the next frame, so simulation time is
+  // never "lost" during normal play.
+  _accumulator += delta;
+
+  // Safety valve: if somehow we still accumulated more than ~5 ticks (can
+  // happen after a very long pause even with the cap above), drain the excess
+  // so we never do more than 5 physics steps in one render frame.
+  if (_accumulator > FIXED_DT * 5) _accumulator = FIXED_DT * 5;
+
+  while (_accumulator >= FIXED_DT) {
+    update();                      // one physics/game-logic tick at 60-fps rate
+    _accumulator -= FIXED_DT;
   }
-  requestAnimationFrame(loop);
+
+  // ── Render at native refresh rate ──────────────────────────────────────
+  draw();
+
+  // ── Music track selection ───────────────────────────────────────────────
+  if (state === 'playing') {
+    const t = getTrackForState();
+    if (t !== _lastTrack) { _lastTrack = t; Music.play(t); }
+  } else if (state !== 'dead') {
+    _lastTrack = '';
+  }
 }
 
-// Init
+// ── Init ──────────────────────────────────────────────────────────────────
 showOverlay('🦙 MEDIOCRE LLAMA LEAP 🦙', 'Dodge spikes, stomp enemies,<br>and reach the flag!', 'PRESS ENTER TO START');
-loop();
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
