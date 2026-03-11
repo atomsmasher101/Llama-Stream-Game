@@ -488,6 +488,7 @@ function buildLevel(n) {
       makeEnemy(620, 264, 'patroller', 590, 740),
       makeGinger(200, 140), makeGinger(450, 110), makeGinger(620, 160),
       makeJimmy(400, 390, 0.5),   // baby Jimmy
+      makeVolanRadooga(350, 40),
     );
     coins.push(...coinRow(70, 305, 5), ...coinRow(245, 265, 5), ...coinRow(475, 145, 5));
     flagX = 730;
@@ -516,6 +517,7 @@ function buildLevel(n) {
       makeGinger(150, 120), makeGinger(350, 80), makeGinger(520, 100), makeGinger(680, 130),
       makeJimmy(250, 390, 0.55),  // baby Jimmy left
       makeJimmy(560, 390, 0.55),  // baby Jimmy right
+      makeVolanRadooga(200, 35), makeVolanRadooga(560, 35),
     );
     coins.push(...coinRow(215, 145, 3), ...coinRow(355, 95, 3), ...coinRow(475, 155, 3));
     flagX = 740;
@@ -543,6 +545,7 @@ function buildLevel(n) {
       makeJimmy(200, 390, 0.65),
       makeJimmy(420, 390, 0.65),
       makeJimmy(620, 390, 0.65),
+      makeVolanRadooga(150, 30), makeVolanRadooga(400, 30), makeVolanRadooga(640, 30),
     );
     coins.push(...coinRow(105, 315, 4), ...coinRow(305, 135, 4), ...coinRow(505, 115, 4));
     flagX = 740;
@@ -571,6 +574,7 @@ function buildLevel(n) {
       makeGinger(150, 100), makeGinger(300, 70), makeGinger(460, 90),
       makeGinger(580, 80), makeGinger(700, 110),
       makeJimmy(380, 390, 1.0),   // ← THE REAL JIMMY
+      makeVolanRadooga(120, 25), makeVolanRadooga(380, 25), makeVolanRadooga(620, 25),
     );
     coins.push(...coinRow(185, 145, 3), ...coinRow(335, 85, 3), ...coinRow(455, 145, 3));
     flagX = 745;
@@ -649,7 +653,27 @@ function makeGinger(x, y) {
   };
 }
 
-// ── JIMMY THE TWERKING FROG (added by Pratchetty) ─────────────────────────
+// ── VOLANRADOOGA — Flying Squirrel (added by AtomSmasher101) ──────────────
+function makeVolanRadooga(x, y) {
+  return {
+    x, y,
+    w: 40, h: 34,
+    type: 'volanradooga',
+    baseX: x,
+    baseY: y,
+    vx: 0, vy: 0,
+    floatTimer: Math.random() * Math.PI * 2,
+    alertTimer: 0,     // frames since player entered aggro range
+    state: 'patrol',   // 'patrol' | 'chase' | 'attack' | 'retreat'
+    chaseTimer: 0,
+    attackCooldown: 0,
+    tailPhase: Math.random() * Math.PI * 2,
+    dead: false,
+    deadTimer: 0,
+    frame: 0,
+    frameTimer: 0,
+  };
+}
 function makeJimmy(x, y, scale = 1) {
   const w = Math.round(64 * scale), h = Math.round(70 * scale);
   return {
@@ -687,6 +711,9 @@ let waffles = []; // falling sky waffles (added by keek_z)
 let gummyBears = []; // sugar free gummy bears (added by AtomSmasher101)
 let diarrheaTimer = 0; // violent diarrhea effect timer
 let deathTimer = 0, winTimer = 0;
+let deathsOnLevel   = 0;   // game-overs on current level (for SimpleHero trigger)
+let simpleHero      = null; // AI companion object (added by Pratchetty)
+let gameOverCount   = 0;   // total game overs ever (for Middors scold index)
 // ── ATOMIC TIMER (added by Pratchetty) ────────────────────────────────────
 const TIMER_START = 60 * 60; // 60 seconds at 60fps
 let bombTimer = TIMER_START;
@@ -988,6 +1015,96 @@ function getTrackForState() {
   return 'main';
 }
 
+// ── MIDDORS SCOLDS (added by AtomSmasher101) ─────────────────────────────
+const MIDDORS_SCOLDS = [
+  "Seriously? You died AGAIN?\nHave you tried reading\nthe controls?",
+  "My nan could do better\nand she uses a SPOON\nto play games.",
+  "Oh wow. Another death.\nColor me absolutely\nunsurprised.",
+  "You know the llama\nactually filed a complaint\nabout you specifically.",
+  "I've seen potted plants\nwith better reflexes.\nJust saying.",
+  "At this point I'm rooting\nfor the cactus.\nSorry not sorry.",
+  "Maybe platformers\njust aren't... your thing?\nNo offense. Some offense.",
+  "Jimmy is literally\ntwerking on your grave\nright now.",
+];
+
+// ── SIMPLEHERO AI COMPANION (added by Pratchetty) ─────────────────────────
+function makeSimpleHero(x, y) {
+  return {
+    x, y,
+    w: 26, h: 32,
+    vx: 0, vy: 0,
+    onGround: false,
+    facing: 1,
+    active: true,
+    shootTimer: 0,
+    floatBob: Math.random() * Math.PI * 2,
+    frame: 0, frameTimer: 0,
+  };
+}
+
+function updateSimpleHero() {
+  if (!simpleHero || !simpleHero.active) return;
+  const sh = simpleHero;
+  sh.floatBob += 0.06;
+  sh.frameTimer++;
+  if (sh.frameTimer > 10) { sh.frame = (sh.frame + 1) % 2; sh.frameTimer = 0; }
+
+  // follow the llama at a friendly distance
+  const targetX = llama.x - 50 * llama.facing;
+  const targetY = llama.y;
+  const dx = targetX - sh.x;
+  sh.vx += Math.sign(dx) * 0.4;
+  sh.vx  = Math.max(-4, Math.min(4, sh.vx));
+  sh.vx *= 0.85;
+  sh.vy += GRAVITY;
+  sh.x  += sh.vx;
+  sh.y  += sh.vy;
+  if (sh.vx > 0.2) sh.facing = 1;
+  else if (sh.vx < -0.2) sh.facing = -1;
+
+  // platform collision (same as llama)
+  sh.onGround = false;
+  for (const p of lvlData.platforms) {
+    if (rectsOverlap(sh, p)) {
+      const ov = (Math.min(sh.y + sh.h, p.y + p.h) - Math.max(sh.y, p.y));
+      const oh = (Math.min(sh.x + sh.w, p.x + p.w) - Math.max(sh.x, p.x));
+      if (ov < oh) {
+        if (sh.vy >= 0 && sh.y + sh.h - sh.vy <= p.y + 4) {
+          sh.y = p.y - sh.h; sh.vy = 0; sh.onGround = true;
+        } else if (sh.vy < 0) { sh.y = p.y + p.h; sh.vy = 0; }
+      } else { sh.x -= oh * Math.sign(sh.vx || 1); sh.vx = 0; }
+    }
+  }
+  // jump over gaps / to reach llama
+  if (sh.onGround && sh.vy === 0 && Math.abs(llama.y - sh.y) > 40) sh.vy = JUMP_F;
+  sh.x = Math.max(0, Math.min(W - sh.w, sh.x));
+  if (sh.y > H + 50) { sh.y = lvlData.platforms[0].y - sh.h; sh.vy = 0; }
+
+  // auto-shoot nearest enemy every 90 frames
+  sh.shootTimer++;
+  if (sh.shootTimer >= 90) {
+    sh.shootTimer = 0;
+    let nearest = null, nearDist = 220;
+    for (const e of lvlData.enemies) {
+      if (e.dead) continue;
+      const d = Math.hypot(e.x - sh.x, e.y - sh.y);
+      if (d < nearDist) { nearDist = d; nearest = e; }
+    }
+    if (nearest) {
+      const dir = Math.sign((nearest.x + nearest.w/2) - (sh.x + sh.w/2));
+      lvlData.bullets.push({
+        x: sh.x + (dir > 0 ? sh.w : -14),
+        y: sh.y + sh.h * 0.4,
+        w: 14, h: 6,
+        vx: dir * 14,
+        life: 55,
+        fromHero: true,
+      });
+      spawnParticles(sh.x + sh.w/2, sh.y + sh.h * 0.4, '#aaffaa', 4);
+    }
+  }
+}
+
 function startGame() {
   score = 0; lives = 3; level = 1;
   bombTimer = TIMER_START;
@@ -995,6 +1112,8 @@ function startGame() {
   waffles = [];
   gummyBears = [];
   diarrheaTimer = 0;
+  deathsOnLevel = 0;
+  simpleHero = null;
   loadLevel();
   state = 'playing';
   hideOverlay();
@@ -1015,6 +1134,8 @@ function nextLevel() {
   waffles = [];
   gummyBears = [];
   diarrheaTimer = 0;
+  deathsOnLevel = 0;
+  simpleHero = null; // SimpleHero leaves when you clear a level
   loadLevel();
   state = 'playing';
   hideOverlay();
@@ -1044,6 +1165,8 @@ function playerDie() {
   if (lives <= 0) {
     state = 'gameover';
     deathTimer = 120;
+    deathsOnLevel++;
+    gameOverCount++;
     Music.play('death');
     showOverlay('GAME OVER', `Score: ${score}`, 'PRESS ENTER TO RETRY');
   } else {
@@ -1056,7 +1179,12 @@ function playerDie() {
 function respawn() {
   const start = lvlData.platforms.find(p => p.type === 'ground');
   llama = makeLlama(60, start.y - 48);
-  llama.invincible = 180; // 3 seconds of invincibility after losing a life
+  llama.invincible = 180;
+  // Spawn SimpleHero if player has struggled on this level (added by Pratchetty)
+  if (deathsOnLevel >= 3 && !simpleHero) {
+    simpleHero = makeSimpleHero(100, start.y - 48);
+    spawnParticles(100, start.y - 48, '#aaffaa', 20);
+  }
   state = 'playing';
 }
 
@@ -1383,6 +1511,78 @@ function update() {
   for (const e of enemies) {
     if (e.dead) {
       e.deadTimer--;
+      continue;
+    }
+
+    // ── VOLANRADOOGA flying squirrel (added by AtomSmasher101) ──────────────
+    if (e.type === 'volanradooga') {
+      e.floatTimer += 0.04;
+      e.tailPhase  += 0.12;
+      e.frameTimer++;
+      if (e.frameTimer > 6) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
+      if (e.attackCooldown > 0) e.attackCooldown--;
+
+      const dx = (llama.x + llama.w/2) - (e.x + e.w/2);
+      const dy = (llama.y + llama.h/2) - (e.y + e.h/2);
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const AGGRO = 180;
+
+      if (e.state === 'patrol') {
+        // lazy figure-8 drift near the top
+        e.x = e.baseX + Math.sin(e.floatTimer * 0.7) * 110;
+        e.y = e.baseY + Math.sin(e.floatTimer * 1.3) * 18;
+        if (dist < AGGRO) { e.state = 'chase'; e.chaseTimer = 0; }
+
+      } else if (e.state === 'chase') {
+        // close in quickly
+        e.vx += Math.sign(dx) * 0.35;
+        e.vy += Math.sign(dy) * 0.25;
+        e.vx = Math.max(-4.5, Math.min(4.5, e.vx));
+        e.vy = Math.max(-4,   Math.min(4,   e.vy));
+        e.x += e.vx; e.y += e.vy;
+        e.chaseTimer++;
+        // keep near top half of screen
+        if (e.y < 10)  { e.y = 10;  e.vy = Math.abs(e.vy); }
+        if (e.y > H * 0.55) { e.y = H * 0.55; e.vy = -Math.abs(e.vy); }
+        if (dist < 60 && e.attackCooldown === 0) { e.state = 'attack'; }
+        if (dist > AGGRO * 1.4 || e.chaseTimer > 200) { e.state = 'retreat'; }
+
+      } else if (e.state === 'attack') {
+        // fast lunge directly at player
+        e.vx = dx / 12;
+        e.vy = dy / 12;
+        e.x += e.vx; e.y += e.vy;
+        e.attackCooldown = 90;
+        e.state = 'retreat';
+
+      } else if (e.state === 'retreat') {
+        // drift back to base position
+        e.vx += (e.baseX - e.x) * 0.02;
+        e.vy += (e.baseY - e.y) * 0.02;
+        e.vx *= 0.88; e.vy *= 0.88;
+        e.x += e.vx; e.y += e.vy;
+        const retDist = Math.hypot(e.x - e.baseX, e.y - e.baseY);
+        if (retDist < 20) e.state = 'patrol';
+        if (dist < AGGRO && e.attackCooldown === 0) e.state = 'chase';
+      }
+
+      // clamp to screen
+      e.x = Math.max(0, Math.min(W - e.w, e.x));
+      e.y = Math.max(5,  Math.min(H * 0.6, e.y));
+
+      // collision with llama
+      if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
+        const stompZone = { x: e.x, y: e.y, w: e.w, h: Math.max(14, e.h * 0.4) };
+        const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
+        if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
+          e.dead = true; e.deadTimer = 30;
+          llama.vy = -9;
+          score += 300; addTime(5 * 60); updateHUD();
+          spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff88ff', 18);
+        } else {
+          playerDie();
+        }
+      }
       continue;
     }
 
@@ -1717,6 +1917,9 @@ function update() {
     spawnParticles(flag.x + 10, flag.y + 45, '#f5c542', 30);
     showOverlay(`LEVEL ${level} CLEAR! 🎉`, `Score: ${score} | +20s ⏱`, 'PRESS ENTER TO CONTINUE');
   }
+
+  // — SimpleHero AI companion (added by Pratchetty) —
+  updateSimpleHero();
 
   // — Invincibility —
   if (llama.invincible > 0) llama.invincible--;
@@ -2111,7 +2314,7 @@ function draw() {
     if (e.dead) {
       if (e.deadTimer > 0) {
         ctx.globalAlpha = e.deadTimer / (e.type === 'jimmy' ? 60 : 30);
-        ctx.fillStyle = e.type === 'jimmy' ? '#00ff88' : '#e74c3c';
+        ctx.fillStyle = e.type === 'jimmy' ? '#00ff88' : e.type === 'volanradooga' ? '#ff88ff' : '#e74c3c';
         ctx.beginPath();
         ctx.arc(e.x + e.w/2, e.y + e.h/2, e.w/2, 0, Math.PI * 2);
         ctx.fill();
@@ -2121,6 +2324,7 @@ function draw() {
     }
     if (e.type === 'jimmy') drawJimmy(e);
     else if (e.type === 'ginger') drawGinger(e);
+    else if (e.type === 'volanradooga') drawVolanRadooga(e);
     else drawEnemy(e);
   }
 
@@ -2328,6 +2532,14 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
+  // ── SIMPLEHERO AI companion draw (added by Pratchetty) ─────────────────
+  if (simpleHero && simpleHero.active && (state === 'playing' || state === 'dead' || state === 'levelclear')) {
+    drawSimpleHero(simpleHero);
+  }
+
+  // ── MIDDORS game-over scold (added by AtomSmasher101) ──────────────────
+  if (state === 'gameover') drawMiddors();
+
   // ── ATOMIC EXPLOSION (added by Pratchetty) ────────────────────────────
   if (atomicExplosion) {
     const f = atomicExplosion.frame;
@@ -2507,6 +2719,318 @@ function drawLlama(l) {
 }
 
 // ── DRAW GINGER FLYING ENEMY (added by Pratchetty) ────────────────────────
+// ── DRAW SIMPLEHERO (added by Pratchetty) ─────────────────────────────────
+function drawSimpleHero(sh) {
+  ctx.save();
+  ctx.translate(sh.x + sh.w/2, sh.y + sh.h);
+  if (sh.facing < 0) ctx.scale(-1, 1);
+
+  const bob = Math.sin(sh.floatBob) * 2;
+
+  // hero glow aura
+  ctx.shadowBlur = 18; ctx.shadowColor = '#aaffaa';
+  ctx.globalAlpha = 0.25 + Math.sin(sh.floatBob * 2) * 0.1;
+  ctx.fillStyle = '#aaffaa';
+  ctx.beginPath();
+  ctx.ellipse(0, -sh.h/2 + bob, sh.w * 0.7, sh.h * 0.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+
+  // cape — flowing green
+  ctx.fillStyle = '#22aa44';
+  ctx.beginPath();
+  ctx.moveTo(-6, -sh.h + bob);
+  ctx.quadraticCurveTo(-18, -sh.h/2 + bob + 6, -10, 0);
+  ctx.lineTo(-2, 0);
+  ctx.closePath(); ctx.fill();
+
+  // body
+  ctx.fillStyle = '#33cc55';
+  ctx.beginPath();
+  ctx.roundRect(-9, -sh.h + bob, 18, 20, 4);
+  ctx.fill();
+
+  // legs
+  ctx.fillStyle = '#228844';
+  const legSwing = Math.sin(sh.floatBob * 3) * 4;
+  ctx.fillRect(-7, -sh.h + 20 + bob, 6, 10);
+  ctx.fillRect( 1, -sh.h + 20 + bob, 6, 10);
+
+  // head
+  ctx.fillStyle = '#ffe0b0';
+  ctx.beginPath();
+  ctx.arc(0, -sh.h + bob - 2, 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  // hero mask (domino mask)
+  ctx.fillStyle = '#004400';
+  ctx.beginPath();
+  ctx.roundRect(-8, -sh.h + bob - 6, 6, 3, 1); ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect( 2, -sh.h + bob - 6, 6, 3, 1); ctx.fill();
+
+  // eyes
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-4, -sh.h + bob - 4, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 4, -sh.h + bob - 4, 1.5, 0, Math.PI * 2); ctx.fill();
+
+  // hair — spiky hero hair
+  ctx.fillStyle = '#ffcc00';
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 3.5 - 1, -sh.h + bob - 10);
+    ctx.lineTo(i * 3.5, -sh.h + bob - 16 - Math.abs(i) * 1.5);
+    ctx.lineTo(i * 3.5 + 1, -sh.h + bob - 10);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // "S" badge on chest
+  ctx.shadowBlur = 6; ctx.shadowColor = '#00ff88';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 8px "Press Start 2P", monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('S', 0, -sh.h + bob + 10);
+  ctx.shadowBlur = 0;
+
+  // speech bubble: "I got you!" appears when first spawned
+  if (sh.floatBob < Math.PI * 3) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(-28, -sh.h + bob - 30, 56, 16, 4);
+    ctx.fill();
+    ctx.fillStyle = '#aaffaa';
+    ctx.font = '5px "Press Start 2P", monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText("I GOT YOU!", 0, -sh.h + bob - 22);
+  }
+
+  ctx.restore();
+}
+
+// ── DRAW MIDDORS scold nerd (added by AtomSmasher101) ──────────────────────
+function drawMiddors() {
+  const scold = MIDDORS_SCOLDS[(gameOverCount - 1) % MIDDORS_SCOLDS.length];
+  const mx = W - 160, my = H - 155;
+
+  ctx.save();
+  ctx.translate(mx, my);
+
+  // speech bubble (points left toward overlay)
+  ctx.fillStyle = 'rgba(255,255,240,0.95)';
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(-110, -70, 108, 65, 8);
+  ctx.fill(); ctx.stroke();
+  // bubble tail
+  ctx.fillStyle = 'rgba(255,255,240,0.95)';
+  ctx.beginPath();
+  ctx.moveTo(-30, -10); ctx.lineTo(-10, 5); ctx.lineTo(-20, -10);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  // scold text
+  ctx.fillStyle = '#220000';
+  ctx.font = '5px "Press Start 2P", monospace';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  const lines = scold.split('\n');
+  lines.forEach((ln, i) => ctx.fillText(ln, -106, -64 + i * 13));
+
+  // body — lanky nerd
+  // legs
+  ctx.fillStyle = '#3333aa';
+  ctx.fillRect(-12, 30, 9, 28);  // left leg
+  ctx.fillRect(  3, 30, 9, 28);  // right leg
+  // shoes
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.roundRect(-14, 56, 12, 7, 2); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(  2, 56, 12, 7, 2); ctx.fill();
+
+  // torso — tucked-in shirt
+  ctx.fillStyle = '#ccccff';
+  ctx.beginPath(); ctx.roundRect(-13, 2, 26, 30, 3); ctx.fill();
+  // pocket protector
+  ctx.fillStyle = '#aaaaee';
+  ctx.fillRect(-2, 6, 10, 12);
+  ctx.fillStyle = '#ff4444'; ctx.fillRect(-1, 6, 2, 10); // red pen
+  ctx.fillStyle = '#4444ff'; ctx.fillRect( 2, 6, 2, 10); // blue pen
+  ctx.fillStyle = '#444';    ctx.fillRect( 5, 6, 2, 10); // pencil
+
+  // arms
+  ctx.fillStyle = '#ffe0b0';
+  ctx.fillRect(-22, 4, 10, 22); // left arm
+  ctx.fillRect( 12, 4, 10, 22); // right arm
+  // hands
+  ctx.beginPath(); ctx.arc(-17, 27, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 17, 27, 5, 0, Math.PI * 2); ctx.fill();
+
+  // head
+  ctx.fillStyle = '#ffe0b0';
+  ctx.beginPath(); ctx.ellipse(0, -14, 14, 16, 0, 0, Math.PI * 2); ctx.fill();
+
+  // nerdy hair — centre parted, flat
+  ctx.fillStyle = '#5c3a00';
+  ctx.beginPath();
+  ctx.ellipse(0, -26, 14, 7, 0, 0, Math.PI, true); ctx.fill();
+  // centre parting
+  ctx.strokeStyle = '#ffe0b0'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, -26); ctx.lineTo(0, -20); ctx.stroke();
+
+  // glasses — thick rimmed
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(-13, -20, 11, 9, 2); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(  2, -20, 11, 9, 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2, -16); ctx.lineTo(2, -16); ctx.stroke(); // bridge
+  // lens glare
+  ctx.fillStyle = 'rgba(200,220,255,0.4)';
+  ctx.beginPath(); ctx.roundRect(-12, -19, 9, 7, 2); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(  3, -19, 9, 7, 2); ctx.fill();
+
+  // eyes behind glasses
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(-7, -15, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 7, -15, 2, 0, Math.PI * 2); ctx.fill();
+
+  // smug smirk
+  ctx.strokeStyle = '#883333'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(4, -7, 5, 0.2, Math.PI - 0.5, true); ctx.stroke();
+
+  // name tag
+  ctx.fillStyle = '#fff';
+  ctx.shadowBlur = 4; ctx.shadowColor = '#aaaaff';
+  ctx.font = 'bold 6px "Press Start 2P", monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('MIDDORS', 0, 65);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+}
+
+// ── DRAW VOLANRADOOGA (added by AtomSmasher101) ───────────────────────────
+function drawVolanRadooga(e) {
+  const cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+  const isAggro = e.state === 'chase' || e.state === 'attack';
+  ctx.save();
+  ctx.translate(cx, cy);
+  // flip to face movement direction
+  if (e.vx < -0.2) ctx.scale(-1, 1);
+
+  // ── RAINBOW TAIL ───────────────────────────────────────────────────────
+  const tailSegs = 10;
+  for (let i = 0; i < tailSegs; i++) {
+    const t    = i / tailSegs;
+    const wave = Math.sin(e.tailPhase + i * 0.6) * (8 + i * 1.4);
+    const tx   = -12 - i * 5.5;
+    const ty   = wave;
+    const r    = 7 - i * 0.5;
+    const hue  = (frameCount * 4 + i * 36) % 360;
+    ctx.fillStyle = `hsl(${hue}, 100%, 60%)`;
+    ctx.shadowBlur = 8; ctx.shadowColor = `hsl(${hue}, 100%, 70%)`;
+    ctx.beginPath();
+    ctx.arc(tx, ty, Math.max(1.5, r), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // ── GLIDE MEMBRANE (patagium) ──────────────────────────────────────────
+  ctx.fillStyle = isAggro ? '#d4601a' : '#c8843c';
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.moveTo(-8, -14);   // top of body
+  ctx.bezierCurveTo(-20, -4, -22, 8, -14, 14);  // left wing
+  ctx.lineTo(-8, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(8, -14);
+  ctx.bezierCurveTo(20, -4, 22, 8, 14, 14);     // right wing
+  ctx.lineTo(8, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // ── BODY ──────────────────────────────────────────────────────────────
+  ctx.fillStyle = isAggro ? '#c85010' : '#b87030';
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 13, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // belly
+  ctx.fillStyle = '#f0c880';
+  ctx.beginPath();
+  ctx.ellipse(0, 5, 7, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── HEAD — oval, pushed forward, squirrel proportions ─────────────────
+  ctx.fillStyle = isAggro ? '#c85010' : '#b87030';
+  // head is a horizontal oval sitting on top of the body, shifted forward
+  ctx.beginPath();
+  ctx.ellipse(4, -16, 10, 8, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ears — tight together at top-centre, tall and narrow like a squirrel
+  ctx.fillStyle = isAggro ? '#c85010' : '#b87030';
+  ctx.beginPath();
+  ctx.moveTo(-1, -22); ctx.lineTo(-5, -33); ctx.lineTo(3, -22); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo( 5, -22); ctx.lineTo( 9, -33); ctx.lineTo(13, -22); ctx.closePath(); ctx.fill();
+  // inner ear
+  ctx.fillStyle = '#ffaaaa';
+  ctx.beginPath();
+  ctx.moveTo(0, -23); ctx.lineTo(-3, -30); ctx.lineTo(2, -23); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(6, -23); ctx.lineTo(8, -30); ctx.lineTo(11, -23); ctx.closePath(); ctx.fill();
+
+  // pointy snout — the key squirrel feature
+  ctx.fillStyle = isAggro ? '#b84000' : '#a06020';
+  ctx.beginPath();
+  ctx.ellipse(13, -14, 5, 3.5, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // cheek pouch puff
+  ctx.fillStyle = isAggro ? '#c85010' : '#c89050';
+  ctx.beginPath();
+  ctx.ellipse(10, -13, 4, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // eyes — small, beady, close together above snout
+  if (isAggro) {
+    // angry V-brow
+    ctx.strokeStyle = '#ff4400'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(4, -19); ctx.lineTo(8, -17); ctx.stroke();
+    ctx.fillStyle = '#ff2200';
+    ctx.beginPath(); ctx.arc(7, -16, 2, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(7, -17, 1.8, 0, Math.PI * 2); ctx.fill();
+    // shine
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(8, -18, 0.7, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // tiny nose at snout tip
+  ctx.fillStyle = '#220800';
+  ctx.beginPath(); ctx.ellipse(16, -14, 1.8, 1.3, 0.3, 0, Math.PI * 2); ctx.fill();
+
+  // little claws
+  ctx.strokeStyle = '#6b3a00'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(-10, 10); ctx.lineTo(-14, 15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-8,  12); ctx.lineTo(-10, 17); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo( 10, 10); ctx.lineTo( 14, 15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(  8, 12); ctx.lineTo( 10, 17); ctx.stroke();
+
+  // aggro exclamation mark
+  if (e.state === 'chase' || e.state === 'attack') {
+    ctx.fillStyle = '#ffdd00';
+    ctx.shadowBlur = 10; ctx.shadowColor = '#ffdd00';
+    ctx.font = 'bold 14px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('!', 0, -34);
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.restore();
+}
+
 function drawGinger(e) {
   const x = e.x, y = e.y, w = e.w, h = e.h;
   const t = e.floatTimer;
