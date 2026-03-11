@@ -287,6 +287,7 @@ function makeLlama(x, y) {
     shootCooldown: 0,
     squashiePower: 0,   // frames remaining of squashie powerup (added by TheMediocreLlama)
     gingerWig: 0,       // frames remaining of ginger wig (added by Middors)
+    wafflesEaten: 0,    // cumulative waffle growth (added by Pratchetty)
   };
 }
 
@@ -456,7 +457,17 @@ function buildLevel(n) {
       ? [{ x: 620, y: 358, w: 24, h: 28, collected: false }]
       : n === 2
       ? [{ x: 100, y: 292, w: 24, h: 28, collected: false }, { x: 480, y: 212, w: 24, h: 28, collected: false }]
-      : [{ x: 215, y: 262, w: 24, h: 28, collected: false }, { x: 470, y: 142, w: 24, h: 28, collected: false }]
+      : [{ x: 215, y: 262, w: 24, h: 28, collected: false }, { x: 470, y: 142, w: 24, h: 28, collected: false }],
+    // ── BIG POTS (added by keek_z) — one per level, tucked in a tricky spot
+    bigPots: n === 1
+      ? [{ x: 55,  y: 188, w: 36, h: 40, collected: false }]
+      : n === 2
+      ? [{ x: 510, y: 128, w: 36, h: 40, collected: false }]
+      : n === 3
+      ? [{ x: 358, y:  78, w: 36, h: 40, collected: false }]
+      : n === 4
+      ? [{ x: 308, y: 118, w: 36, h: 40, collected: false }]
+      : [{ x: 338, y:  68, w: 36, h: 40, collected: false }]
   };
 }
 
@@ -527,6 +538,9 @@ function coinRow(startX, y, count) {
 
 // ── GAME VARS ───────────────────────────────────────────────────────────────
 let llama, lvlData, keys = {}, particles = [], screenShake = 0;
+let waffles = []; // falling sky waffles (added by keek_z)
+let gummyBears = []; // sugar free gummy bears (added by AtomSmasher101)
+let diarrheaTimer = 0; // violent diarrhea effect timer
 let deathTimer = 0, winTimer = 0;
 // ── ATOMIC TIMER (added by Pratchetty) ────────────────────────────────────
 const TIMER_START = 60 * 60; // 60 seconds at 60fps
@@ -833,6 +847,9 @@ function startGame() {
   score = 0; lives = 3; level = 1;
   bombTimer = TIMER_START;
   atomicExplosion = null;
+  waffles = [];
+  gummyBears = [];
+  diarrheaTimer = 0;
   loadLevel();
   state = 'playing';
   hideOverlay();
@@ -850,6 +867,9 @@ function nextLevel() {
   level++;
   if (level > 5) { winGame(); return; }
   addTime(20 * 60);
+  waffles = [];
+  gummyBears = [];
+  diarrheaTimer = 0;
   loadLevel();
   state = 'playing';
   hideOverlay();
@@ -1110,6 +1130,7 @@ function update() {
   const guns = lvlData.guns;
   const squashies = lvlData.squashies;
   const gingerBabies = lvlData.gingerBabies;
+  const bigPots = lvlData.bigPots;
   const left  = keys['ArrowLeft']  || keys['KeyA'];
   const right = keys['ArrowRight'] || keys['KeyD'];
   const jump  = keys['ArrowUp']    || keys['KeyW'] || keys['ArrowUp'];
@@ -1398,7 +1419,97 @@ function update() {
   }
   if (llama.gingerWig > 0) llama.gingerWig--;
 
-  // — Flag (level end) —
+  // — Big pot extra life (added by keek_z) —
+  for (const p of bigPots) {
+    if (!p.collected && rectsOverlap(llama, p)) {
+      p.collected = true;
+      lives++;
+      updateHUD();
+      spawnParticles(p.x + p.w/2, p.y + p.h/2, '#00aaff', 30);
+      spawnParticles(p.x + p.w/2, p.y + p.h/2, '#aaddff', 15);
+      spawnParticles(p.x + p.w/2, p.y + p.h/2, '#ffffff', 10);
+    }
+  }
+
+  // — Waffles falling from the sky (added by keek_z) —
+  if (frameCount % 55 === 0) {
+    waffles.push({
+      x: Math.random() * (W - 32),
+      y: -36,
+      w: 32, h: 32,
+      vy: 1.2 + Math.random() * 1.4,
+      rot: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 0.07,
+      collected: false,
+    });
+  }
+  for (let i = waffles.length - 1; i >= 0; i--) {
+    const w = waffles[i];
+    w.y  += w.vy;
+    w.rot += w.spin;
+    if (!w.collected && rectsOverlap(llama, w)) {
+      w.collected = true;
+      score += 50; addTime(2 * 60); updateHUD();
+      spawnParticles(w.x + 16, w.y + 16, '#f5c010', 12);
+      spawnParticles(w.x + 16, w.y + 16, '#c87820', 8);
+      // grow the llama (added by Pratchetty) — cap at 20 waffles
+      if (llama.wafflesEaten < 20) {
+        llama.wafflesEaten++;
+        const dw = 1.5, dh = 2;
+        llama.w += dw;
+        llama.h += dh;
+        llama.x -= dw / 2;  // keep horizontally centred
+        llama.y -= dh;       // keep feet on the ground
+      }
+    }
+    // remove once off screen or collected & faded
+    if (w.y > H + 40) waffles.splice(i, 1);
+  }
+
+  // — Sugar Free Gummy Bears (added by AtomSmasher101) — less frequent than waffles
+  const GUMMY_COLOURS = ['#ff3333','#33cc33','#ffaa00','#cc44ff','#ff66aa','#00bbff'];
+  if (frameCount % 180 === 90) { // every 3 seconds, offset from waffles
+    gummyBears.push({
+      x: Math.random() * (W - 20),
+      y: -28,
+      w: 20, h: 24,
+      vy: 1.0 + Math.random() * 1.0,
+      rot: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 0.09,
+      color: GUMMY_COLOURS[Math.floor(Math.random() * GUMMY_COLOURS.length)],
+      collected: false,
+    });
+  }
+  for (let i = gummyBears.length - 1; i >= 0; i--) {
+    const g = gummyBears[i];
+    g.y   += g.vy;
+    g.rot += g.spin;
+    if (!g.collected && rectsOverlap(llama, g)) {
+      g.collected = true;
+      // VIOLENT DIARRHEA — reset size and trigger effect
+      diarrheaTimer = 300; // 5 seconds of suffering
+      llama.w = 28; llama.h = 36; llama.wafflesEaten = 0;
+      // brown particle explosion from llama's backside
+      for (let j = 0; j < 6; j++) {
+        spawnParticles(llama.x, llama.y + llama.h, '#8B4513', 8);
+        spawnParticles(llama.x, llama.y + llama.h, '#5c2d00', 5);
+        spawnParticles(llama.x, llama.y + llama.h, '#a0522d', 4);
+      }
+    }
+    if (g.y > H + 40) gummyBears.splice(i, 1);
+  }
+  // diarrhea: continuous brown splatter from llama rear + screen tint
+  if (diarrheaTimer > 0) {
+    diarrheaTimer--;
+    if (frameCount % 4 === 0) {
+      spawnParticles(
+        llama.x + (llama.facing === 1 ? 0 : llama.w),
+        llama.y + llama.h - 4,
+        ['#8B4513','#5c2d00','#a0522d','#c87941'][Math.floor(Math.random()*4)],
+        3
+      );
+    }
+  }
   if (rectsOverlap(llama, { x: flag.x, y: flag.y, w: flag.w, h: flag.h })) {
     state = 'levelclear';
     winTimer = 90;
@@ -1643,7 +1754,86 @@ function draw() {
     ctx.shadowBlur = 0;
     ctx.restore();
   }
-  // Ginger baby collectibles (added by Middors)
+  // Shield potions — extra life (added by keek_z, reskinned per keek_z request)
+  for (const p of lvlData.bigPots) {
+    if (p.collected) continue;
+    ctx.save();
+    ctx.translate(p.x + p.w / 2, p.y + p.h);
+
+    const pulse  = Math.sin(frameCount * 0.08) * 0.08 + 1;
+    const glow   = Math.abs(Math.sin(frameCount * 0.06));
+
+    // ground glow
+    ctx.shadowBlur = 20 + glow * 12; ctx.shadowColor = '#00aaff';
+    ctx.fillStyle = `rgba(0,140,255,${0.15 + glow * 0.1})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 16, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.save();
+    ctx.scale(pulse, pulse);
+
+    // bottle body — rounded rect
+    ctx.fillStyle = '#0066cc';
+    ctx.shadowBlur = 16; ctx.shadowColor = '#00ccff';
+    ctx.beginPath();
+    ctx.roundRect(-10, -36, 20, 30, 6);
+    ctx.fill();
+
+    // liquid fill (lighter blue, slightly lower)
+    ctx.fillStyle = '#33aaff';
+    ctx.beginPath();
+    ctx.roundRect(-8, -22, 16, 15, 4);
+    ctx.fill();
+
+    // shimmer highlight on liquid
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(-3, -18, 3, 6, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // bottle neck
+    ctx.fillStyle = '#0055aa';
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.roundRect(-5, -42, 10, 8, 3);
+    ctx.fill();
+
+    // cork / cap
+    ctx.fillStyle = '#cc8833';
+    ctx.beginPath();
+    ctx.roundRect(-5, -46, 10, 6, 2);
+    ctx.fill();
+
+    // shield icon on bottle face
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.shadowBlur = 8; ctx.shadowColor = '#fff';
+    ctx.beginPath();
+    ctx.moveTo(0, -33);
+    ctx.lineTo( 6, -30);
+    ctx.lineTo( 6, -27);
+    ctx.bezierCurveTo(6, -24, 0, -22, 0, -22);
+    ctx.bezierCurveTo(0, -22, -6, -24, -6, -27);
+    ctx.lineTo(-6, -30);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+
+    // floating "+1 SHIELD" label
+    const floatY = Math.sin(frameCount * 0.07) * 3 - 2;
+    ctx.fillStyle = '#aaddff';
+    ctx.shadowBlur = 8; ctx.shadowColor = '#00aaff';
+    ctx.font = 'bold 6px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('+1 LIFE', 0, -48 + floatY);
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+  }
   for (const b of lvlData.gingerBabies) {
     if (b.collected) continue;
     const bob = Math.sin(frameCount * 0.09 + b.x) * 3;
@@ -1806,6 +1996,128 @@ function draw() {
     ctx.globalAlpha = 1; ctx.shadowBlur = 0;
   }
   if (visible) drawLlama(llama);
+  }
+
+  // Waffles (added by keek_z)
+  for (const wf of waffles) {
+    if (wf.collected) continue;
+    ctx.save();
+    ctx.translate(wf.x + 16, wf.y + 16);
+    ctx.rotate(wf.rot);
+
+    // waffle body — golden square
+    ctx.fillStyle = '#e8a020';
+    ctx.beginPath();
+    ctx.roundRect(-14, -14, 28, 28, 3);
+    ctx.fill();
+
+    // darker grid lines
+    ctx.strokeStyle = '#b86010';
+    ctx.lineWidth = 1.5;
+    for (let g = -7; g <= 7; g += 7) {
+      ctx.beginPath(); ctx.moveTo(g, -14); ctx.lineTo(g, 14); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-14, g); ctx.lineTo(14, g); ctx.stroke();
+    }
+
+    // golden highlight squares in each cell
+    ctx.fillStyle = '#f5c842';
+    const cells = [-10.5, -3.5, 3.5];
+    for (const cx of cells) for (const cy of cells) {
+      ctx.beginPath();
+      ctx.roundRect(cx - 2, cy - 2, 4, 4, 1);
+      ctx.fill();
+    }
+
+    // butter pat on top
+    ctx.fillStyle = '#ffe87a';
+    ctx.shadowBlur = 6; ctx.shadowColor = '#ffe060';
+    ctx.beginPath();
+    ctx.ellipse(0, -4, 7, 4, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // tiny syrup drip
+    ctx.fillStyle = '#a04000';
+    ctx.beginPath();
+    ctx.ellipse(4, 6, 3, 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(4, 7); ctx.lineTo(4, 13); ctx.lineTo(6, 13);
+    ctx.lineWidth = 2; ctx.strokeStyle = '#a04000'; ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // Sugar Free Gummy Bears (added by AtomSmasher101)
+  for (const g of gummyBears) {
+    if (g.collected) continue;
+    ctx.save();
+    ctx.translate(g.x + g.w / 2, g.y + g.h / 2);
+    ctx.rotate(g.rot);
+
+    // glow
+    ctx.shadowBlur = 10; ctx.shadowColor = g.color;
+
+    // body — rounded bear silhouette
+    ctx.fillStyle = g.color;
+    ctx.beginPath();
+    ctx.ellipse(0, 3, 8, 10, 0, 0, Math.PI * 2); // torso
+    ctx.fill();
+
+    // head
+    ctx.beginPath();
+    ctx.arc(0, -7, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ears
+    ctx.beginPath(); ctx.arc(-5, -13, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 5, -13, 3, 0, Math.PI * 2); ctx.fill();
+
+    // inner ear
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath(); ctx.arc(-5, -13, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 5, -13, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // eyes
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.beginPath(); ctx.arc(-2.5, -8, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 2.5, -8, 1.2, 0, Math.PI * 2); ctx.fill();
+
+    // shine
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath(); ctx.ellipse(-3, -10, 2, 3, -0.3, 0, Math.PI * 2); ctx.fill();
+
+    // little arms
+    ctx.fillStyle = g.color;
+    ctx.beginPath(); ctx.ellipse(-10, 0, 3, 5, 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 10, 0, 3, 5, -0.4, 0, Math.PI * 2); ctx.fill();
+
+    // "SUGAR FREE" tiny warning label
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.font = '4px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('SUGAR', 0, 1);
+    ctx.fillText('FREE',  0, 6);
+
+    ctx.restore();
+  }
+
+  // Diarrhea screen tint (added by AtomSmasher101)
+  if (diarrheaTimer > 0) {
+    const intensity = Math.min(diarrheaTimer / 300, 1);
+    const flicker   = Math.sin(frameCount * 0.8) * 0.5 + 0.5;
+    ctx.fillStyle   = `rgba(101,51,0,${intensity * 0.22 * flicker})`;
+    ctx.fillRect(0, 0, W, H);
+    // warning text
+    if (diarrheaTimer > 240 || Math.floor(frameCount / 8) % 2 === 0) {
+      ctx.fillStyle = `rgba(180,80,0,${intensity * 0.9})`;
+      ctx.font = 'bold 13px "Press Start 2P", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('💩 VIOLENT DIARRHEA 💩', W / 2, 14);
+    }
   }
 
   // Particles
