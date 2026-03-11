@@ -113,6 +113,7 @@
   <div>LIVES: <span id="livesDisplay">3</span></div>
   <div>LEVEL: <span id="levelDisplay">1</span></div>
   <div>AMMO: <span id="ammoDisplay">🔫—</span></div>
+  <div>SQUASHIE: <span id="squashieDisplay">🍬—</span></div>
 </div>
 <canvas id="gameCanvas" width="800" height="450"></canvas>
 <div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗 &nbsp;|&nbsp; G / F — SHOOT 🔫</div>
@@ -167,7 +168,8 @@ function makeLlama(x, y) {
     invincible: 0,
     spitCooldown: 0,
     gunAmmo: 0,
-    shootCooldown: 0
+    shootCooldown: 0,
+    squashiePower: 0,   // frames remaining of squashie powerup (added by TheMediocreLlama)
   };
 }
 
@@ -269,7 +271,14 @@ function buildLevel(n) {
     guns.push({ x: 490, y: 135, w: 28, h: 18, collected: false });
   }
 
-  return { platforms, hazards, enemies, coins, flag, spits: [], guns, bullets: [] };
+  return { platforms, hazards, enemies, coins, flag, spits: [], guns, bullets: [],
+    // ── SQUASHIES (added by TheMediocreLlama) ────────────────────────────
+    squashies: n === 1
+      ? [{ x: 480, y: 272, w: 22, h: 22, collected: false }]
+      : n === 2
+      ? [{ x: 160, y: 162, w: 22, h: 22, collected: false }, { x: 630, y: 252, w: 22, h: 22, collected: false }]
+      : [{ x: 355, y: 82, w: 22, h: 22, collected: false }, { x: 575, y: 202, w: 22, h: 22, collected: false }]
+  };
 }
 
 function makeEnemy(x, y, type, patrolA, patrolB) {
@@ -412,6 +421,9 @@ function updateHUD() {
   document.getElementById('livesDisplay').textContent = '🦙'.repeat(Math.max(0, lives));
   document.getElementById('levelDisplay').textContent = level;
   document.getElementById('ammoDisplay').textContent = llama ? '🔫' + (llama.gunAmmo > 0 ? '●'.repeat(llama.gunAmmo) : '—') : '—';
+  document.getElementById('squashieDisplay').textContent = (llama && llama.squashiePower > 0)
+    ? '🍬 ' + Math.ceil(llama.squashiePower / 60) + 's'
+    : '🍬—';
 }
 
 // ── OVERLAY ──────────────────────────────────────────────────────────────────
@@ -541,7 +553,7 @@ function update() {
   if (llama.y > H + 50) playerDie();
 
   // — Hazard collision —
-  if (llama.invincible <= 0) {
+  if (llama.invincible <= 0 && llama.squashiePower <= 0) {
     for (const h of hazards) {
       if (rectsOverlap(llama, h)) { playerDie(); break; }
     }
@@ -649,8 +661,8 @@ function update() {
     e.frameTimer++;
     if (e.frameTimer > 10) { e.frame = (e.frame + 1) % 2; e.frameTimer = 0; }
 
-    // stomp check
-    if (llama.invincible <= 0 && rectsOverlap(llama, e)) {
+    // stomp check (skip during squashie power — handled separately)
+    if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
       const stompZone = { x: e.x + 2, y: e.y, w: e.w - 4, h: 8 };
       if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
         e.dead = true; e.deadTimer = 30;
@@ -709,6 +721,34 @@ function update() {
       llama.gunAmmo = Math.min((llama.gunAmmo || 0) + 3, 9);
       updateHUD();
       spawnParticles(g.x + g.w/2, g.y + g.h/2, '#fff8aa', 14);
+    }
+  }
+
+  // — Squashie powerup (added by TheMediocreLlama) —
+  for (const s of lvlData.squashies) {
+    if (!s.collected && rectsOverlap(llama, s)) {
+      s.collected = true;
+      llama.squashiePower = 600; // 10 seconds of pure power
+      updateHUD();
+      spawnParticles(s.x + s.w/2, s.y + s.h/2, '#ff69b4', 30);
+      spawnParticles(s.x + s.w/2, s.y + s.h/2, '#ff00ff', 20);
+    }
+  }
+  if (llama.squashiePower > 0) {
+    llama.squashiePower--;
+    // While powered up: touching enemies kills them instead of you
+    for (const e of lvlData.enemies) {
+      if (!e.dead && rectsOverlap(llama, e)) {
+        if (e.type === 'jimmy') {
+          e.hp = 0; e.dead = true; e.deadTimer = 60;
+          score += 500; updateHUD();
+          spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff69b4', 40);
+        } else {
+          e.dead = true; e.deadTimer = 30;
+          score += 300; updateHUD();
+          spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff69b4', 16);
+        }
+      }
     }
   }
 
@@ -959,6 +999,33 @@ function draw() {
     ctx.restore();
   }
   const f = flag;
+
+  // Squashie powerups (added by TheMediocreLlama)
+  for (const s of lvlData.squashies) {
+    if (s.collected) continue;
+    const bob = Math.sin(frameCount * 0.1 + s.x) * 4;
+    ctx.save();
+    ctx.translate(s.x + s.w/2, s.y + s.h/2 + bob);
+    const glowSize = 14 + Math.sin(frameCount * 0.15) * 5;
+    ctx.shadowBlur = glowSize; ctx.shadowColor = '#ff69b4';
+    // body
+    ctx.fillStyle = '#ff69b4';
+    ctx.beginPath(); ctx.ellipse(0, 0, 10, 11, 0, 0, Math.PI * 2); ctx.fill();
+    // shine
+    ctx.fillStyle = '#ffb6d9';
+    ctx.beginPath(); ctx.ellipse(-3, -4, 4, 3, -0.4, 0, Math.PI * 2); ctx.fill();
+    // face
+    ctx.fillStyle = '#c0006a';
+    ctx.beginPath(); ctx.arc(-3, 1, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 3, 1, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#c0006a'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 4, 3, 0, Math.PI); ctx.stroke();
+    // top bump
+    ctx.fillStyle = '#ff69b4';
+    ctx.beginPath(); ctx.ellipse(0, -10, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
   ctx.fillStyle = rbDark(90);
   ctx.fillRect(f.x + 8, f.y, 4, f.h);
   const wave = Math.sin(frameCount * 0.1) * 4;
@@ -999,7 +1066,19 @@ function draw() {
   // Llama
   if (state === 'playing' || state === 'dead' || state === 'levelclear') {
     const visible = state !== 'playing' || llama.invincible <= 0 || Math.floor(frameCount / 4) % 2 === 0;
-    if (visible) drawLlama(llama);
+    // Squashie powerup aura (added by TheMediocreLlama)
+  if (llama.squashiePower > 0) {
+    const auraAlpha = 0.3 + Math.sin(frameCount * 0.2) * 0.2;
+    const auraSize  = 6 + Math.sin(frameCount * 0.15) * 4;
+    ctx.globalAlpha = auraAlpha;
+    ctx.fillStyle = '#ff69b4';
+    ctx.shadowBlur = 20; ctx.shadowColor = '#ff00ff';
+    ctx.beginPath();
+    ctx.ellipse(llama.x + llama.w/2, llama.y + llama.h/2, llama.w/2 + auraSize, llama.h/2 + auraSize, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
+  if (visible) drawLlama(llama);
   }
 
   // Particles
