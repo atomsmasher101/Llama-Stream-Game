@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLAMA LEAP 🦙</title>
+<title>MEDIOCRE LLAMA LEAP 🦙</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:wght@400&display=swap');
 
@@ -93,7 +93,7 @@
 </head>
 <body>
 
-<div id="title">🦙 LLAMA LEAP 🦙</div>
+<div id="title">🦙 MEDIOCRE LLAMA LEAP 🦙</div>
 <div id="hud">
   <div>SCORE: <span id="scoreDisplay">0</span></div>
   <div>LIVES: <span id="livesDisplay">3</span></div>
@@ -103,7 +103,7 @@
 <div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗</div>
 
 <div id="overlay">
-  <h2>🦙 LLAMA LEAP 🦙</h2>
+  <h2>🦙 MEDIOCRE LLAMA LEAP 🦙</h2>
   <p>Dodge spikes, stomp enemies,<br>and reach the flag!</p>
   <p class="blink">PRESS ENTER TO START</p>
 </div>
@@ -197,6 +197,7 @@ function buildLevel(n) {
       makeEnemy(300, 375, 'patroller', 200, 380),
     );
     coins.push(...coinRow(105, 315, 4), ...coinRow(235, 255, 4), ...coinRow(425, 125, 5));
+    enemies.push(makeJimmy(500, 390));
     flagX = 730;
   } else {
     // level 3 — chaos
@@ -221,6 +222,7 @@ function buildLevel(n) {
       makeEnemy(100, 375, 'patroller', 50, 200),
     );
     coins.push(...coinRow(215, 145, 3), ...coinRow(355, 95, 3), ...coinRow(475, 155, 3));
+    enemies.push(makeJimmy(400, 390));
     flagX = 740;
   }
 
@@ -240,6 +242,28 @@ function makeEnemy(x, y, type, patrolA, patrolB) {
     deadTimer: 0,
     frame: 0,
     frameTimer: 0,
+  };
+}
+
+// ── JIMMY THE TWERKING FROG (added by Pratchetty) ─────────────────────────
+function makeJimmy(x, y) {
+  return {
+    x, y: y - 70, w: 64, h: 70,
+    vx: 0, vy: 0,
+    type: 'jimmy',
+    patrolA: x - 180,
+    patrolB: x + 180,
+    moveDir: 1,
+    dead: false,
+    deadTimer: 0,
+    hp: 5,
+    frame: 0,
+    frameTimer: 0,
+    twerk: 0,        // twerk oscillation timer
+    twerkDir: 1,
+    jumpTimer: 0,
+    onGround: false,
+    nameTag: true,
   };
 }
 
@@ -446,10 +470,65 @@ function update() {
       e.deadTimer--;
       continue;
     }
-    // patrol movement
+
+    // ── JIMMY special logic ──────────────────────────────────
+    if (e.type === 'jimmy') {
+      e.twerk += 0.18;
+      e.vy = (e.vy || 0) + GRAVITY;
+      // hop periodically
+      e.jumpTimer++;
+      if (e.jumpTimer > 90 && e.onGround) {
+        e.vy = -10 - Math.random() * 4;
+        e.jumpTimer = 0;
+      }
+      // chase llama slowly
+      const dx = (llama.x + llama.w/2) - (e.x + e.w/2);
+      e.vx += Math.sign(dx) * 0.08;
+      e.vx = Math.max(-2.5, Math.min(2.5, e.vx));
+      e.x += e.vx;
+      e.y += e.vy;
+      // clamp to level bounds
+      if (e.x < 0) e.x = 0;
+      if (e.x + e.w > W) e.x = W - e.w;
+      // platform collision
+      e.onGround = false;
+      for (const p of platforms) {
+        if (rectsOverlap(e, p)) {
+          if (e.vy >= 0 && e.y + e.h - e.vy <= p.y + 4) {
+            e.y = p.y - e.h;
+            e.vy = 0;
+            e.onGround = true;
+          }
+        }
+      }
+      if (e.y > H + 80) { e.y = platforms[0].y - e.h; e.vy = 0; }
+      e.frameTimer++;
+      if (e.frameTimer > 6) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
+
+      // stomp check (needs 3 stomps to kill Jimmy)
+      if (llama.invincible <= 0 && rectsOverlap(llama, e)) {
+        const stompZone = { x: e.x + 4, y: e.y, w: e.w - 8, h: 10 };
+        if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
+          e.hp--;
+          llama.vy = -10;
+          llama.invincible = 40;
+          score += 50; updateHUD();
+          spawnParticles(e.x + e.w/2, e.y, '#00cc44', 14);
+          if (e.hp <= 0) {
+            e.dead = true; e.deadTimer = 60;
+            score += 500; updateHUD();
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, '#00ff88', 40);
+          }
+        } else if (llama.invincible <= 0) {
+          playerDie();
+        }
+      }
+      continue;
+    }
+
+    // ── standard enemy logic ─────────────────────────────────
     e.x += e.vx;
     if (e.x <= e.patrolA || e.x + e.w >= e.patrolB) e.vx *= -1;
-    // apply gravity-like snap to nearest platform
     e.vy = (e.vy || 0) + GRAVITY;
     e.y += e.vy;
     for (const p of platforms) {
@@ -461,7 +540,6 @@ function update() {
         }
       }
     }
-    // enemy frame
     e.frameTimer++;
     if (e.frameTimer > 10) { e.frame = (e.frame + 1) % 2; e.frameTimer = 0; }
 
@@ -487,10 +565,23 @@ function update() {
     if (s.life <= 0 || s.x < 0 || s.x > W) { spits.splice(i, 1); continue; }
     for (const e of enemies) {
       if (!e.dead && rectsOverlap(s, e)) {
-        e.dead = true; e.deadTimer = 30;
-        spits.splice(i, 1);
-        score += 150; updateHUD();
-        spawnParticles(e.x + e.w/2, e.y, '#27ae60', 12);
+        if (e.type === 'jimmy') {
+          e.hp--;
+          spits.splice(i, 1);
+          spawnParticles(e.x + e.w/2, e.y, '#00cc44', 10);
+          if (e.hp <= 0) {
+            e.dead = true; e.deadTimer = 60;
+            score += 500; updateHUD();
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, '#00ff88', 40);
+          } else {
+            score += 50; updateHUD();
+          }
+        } else {
+          e.dead = true; e.deadTimer = 30;
+          spits.splice(i, 1);
+          score += 150; updateHUD();
+          spawnParticles(e.x + e.w/2, e.y, '#27ae60', 12);
+        }
         break;
       }
     }
@@ -655,8 +746,8 @@ function draw() {
   for (const e of enemies) {
     if (e.dead) {
       if (e.deadTimer > 0) {
-        ctx.globalAlpha = e.deadTimer / 30;
-        ctx.fillStyle = '#e74c3c';
+        ctx.globalAlpha = e.deadTimer / (e.type === 'jimmy' ? 60 : 30);
+        ctx.fillStyle = e.type === 'jimmy' ? '#00ff88' : '#e74c3c';
         ctx.beginPath();
         ctx.arc(e.x + e.w/2, e.y + e.h/2, e.w/2, 0, Math.PI * 2);
         ctx.fill();
@@ -664,7 +755,8 @@ function draw() {
       }
       continue;
     }
-    drawEnemy(e);
+    if (e.type === 'jimmy') drawJimmy(e);
+    else drawEnemy(e);
   }
 
   // Spits
@@ -759,6 +851,130 @@ function drawLlama(l) {
   ctx.restore();
 }
 
+// ── DRAW JIMMY (added by Pratchetty) ──────────────────────────────────────
+function drawJimmy(e) {
+  const x = e.x, y = e.y, w = e.w, h = e.h;
+  const t = e.twerk;
+
+  // twerk: oscillate hips — upper body tilts opposite to lower
+  const hipSwing   = Math.sin(t * 2) * 10;   // degrees
+  const bodySwing  = Math.sin(t * 2 + Math.PI) * 6;
+
+  ctx.save();
+  ctx.translate(x + w/2, y + h);
+
+  // ── Lower body / butt (the twerker) ──
+  ctx.save();
+  ctx.rotate((hipSwing * Math.PI) / 180);
+  // Hips
+  ctx.fillStyle = '#1aab3a';
+  ctx.fillRect(-22, -28, 44, 28);
+  // Legs
+  const legL = Math.sin(t * 2) * 8;
+  const legR = -legL;
+  ctx.fillStyle = '#158a2e';
+  // left leg
+  ctx.save();
+  ctx.translate(-12, 0);
+  ctx.rotate((legL * Math.PI) / 180);
+  ctx.fillRect(-6, 0, 12, 20);
+  // left foot
+  ctx.fillStyle = '#0d6e24';
+  ctx.fillRect(-8, 18, 18, 8);
+  ctx.restore();
+  // right leg
+  ctx.save();
+  ctx.translate(12, 0);
+  ctx.rotate((legR * Math.PI) / 180);
+  ctx.fillStyle = '#158a2e';
+  ctx.fillRect(-6, 0, 12, 20);
+  ctx.fillStyle = '#0d6e24';
+  ctx.fillRect(-10, 18, 18, 8);
+  ctx.restore();
+  ctx.restore();
+
+  // ── Upper body ──
+  ctx.save();
+  ctx.rotate((bodySwing * Math.PI) / 180);
+  // torso
+  ctx.fillStyle = '#22cc44';
+  ctx.fillRect(-18, -62, 36, 36);
+  // belly spots
+  ctx.fillStyle = '#88ffaa';
+  ctx.beginPath(); ctx.ellipse(0, -50, 10, 7, 0, 0, Math.PI*2); ctx.fill();
+
+  // Arms (flailing with twerk)
+  const armSwing = Math.sin(t * 2) * 30;
+  ctx.fillStyle = '#1aab3a';
+  // left arm
+  ctx.save();
+  ctx.translate(-18, -52);
+  ctx.rotate((-40 + armSwing) * Math.PI / 180);
+  ctx.fillRect(-5, 0, 10, 22);
+  // left hand
+  ctx.fillStyle = '#0d8c30';
+  ctx.beginPath(); ctx.arc(0, 22, 7, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+  // right arm
+  ctx.save();
+  ctx.translate(18, -52);
+  ctx.rotate((40 - armSwing) * Math.PI / 180);
+  ctx.fillRect(-5, 0, 10, 22);
+  ctx.fillStyle = '#0d8c30';
+  ctx.beginPath(); ctx.arc(0, 22, 7, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Head
+  ctx.fillStyle = '#22cc44';
+  ctx.beginPath();
+  ctx.ellipse(0, -72, 22, 18, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Eyes (big bulgy frog eyes)
+  ctx.fillStyle = '#ffff00';
+  ctx.beginPath(); ctx.arc(-10, -80, 9, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 10, -80, 9, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(-10, -80, 5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 10, -80, 5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-8, -82, 2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(12, -82, 2, 0, Math.PI*2); ctx.fill();
+  // Mouth (wide frog grin)
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-14, -63);
+  ctx.quadraticCurveTo(0, -55, 14, -63);
+  ctx.stroke();
+  // tongue
+  if (Math.sin(t) > 0.7) {
+    ctx.fillStyle = '#ff4466';
+    ctx.beginPath();
+    ctx.ellipse(0, -58, 7, 5, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // HP bar
+  ctx.fillStyle = '#333';
+  ctx.fillRect(-28, -h - 12, 56, 7);
+  ctx.fillStyle = e.hp >= 4 ? '#22cc44' : e.hp >= 2 ? '#f5c542' : '#e74c3c';
+  ctx.fillRect(-28, -h - 12, (e.hp / 5) * 56, 7);
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+  ctx.strokeRect(-28, -h - 12, 56, 7);
+
+  // Name tag
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.shadowBlur = 6; ctx.shadowColor = '#00ff88';
+  ctx.fillText('JIMMY', 0, -h - 14);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+}
+
 function drawEnemy(e) {
   const x = e.x, y = e.y, w = e.w, h = e.h;
   // Simple cactus-like enemy
@@ -793,7 +1009,7 @@ function loop() {
 }
 
 // Init
-showOverlay('🦙 LLAMA LEAP 🦙', 'Dodge spikes, stomp enemies,<br>and reach the flag!', 'PRESS ENTER TO START');
+showOverlay('🦙 MEDIOCRE LLAMA LEAP 🦙', 'Dodge spikes, stomp enemies,<br>and reach the flag!', 'PRESS ENTER TO START');
 loop();
 </script>
 </body>
