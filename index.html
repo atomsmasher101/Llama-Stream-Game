@@ -532,6 +532,187 @@ const TIMER_START = 60 * 60; // 60 seconds at 60fps
 let bombTimer = TIMER_START;
 let atomicExplosion = null; // { frame, x, y } when triggered
 
+// ── CHIPTUNE MUSIC ENGINE (added by Pratchetty) ────────────────────────────
+const Music = (() => {
+  let ctx, masterGain, currentTrack = null, beatInterval = null;
+  let beat = 0, playing = false, trackName = '';
+
+  const BPM = 140;
+  const SPB = 60 / BPM;       // seconds per beat
+  const S16 = SPB / 4;        // 16th note duration
+
+  // Note frequencies
+  const N = { C3:131,D3:147,E3:165,F3:175,G3:196,A3:220,B3:247,
+               C4:262,D4:294,E4:330,F4:349,G4:392,A4:440,B4:494,
+               C5:523,D5:587,E5:659,F5:698,G5:784,A5:880,
+               R:0 };
+
+  // ── Main funky theme (32-beat loop) ──────────────────────────────────────
+  // Bass: funky two-bar groove
+  const BASS = [
+    N.C3,N.R,  N.C3,N.E3, N.G3,N.R,  N.C3,N.R,
+    N.C3,N.C3, N.R, N.G3, N.A3,N.R,  N.G3,N.E3,
+    N.F3,N.R,  N.F3,N.A3, N.C4,N.R,  N.F3,N.R,
+    N.G3,N.G3, N.R, N.D3, N.E3,N.R,  N.G3,N.R,
+  ];
+  // Lead melody — bright square wave
+  const LEAD = [
+    N.C5,N.R,  N.E5,N.R,  N.G5,N.E5, N.C5,N.R,
+    N.R, N.A4, N.C5,N.R,  N.G4,N.R,  N.A4,N.G4,
+    N.F4,N.R,  N.A4,N.R,  N.C5,N.A4, N.F4,N.R,
+    N.R, N.G4, N.A4,N.R,  N.E4,N.R,  N.G4,N.E4,
+  ];
+  // Harmony — slightly detuned for that chiptune chorus feel
+  const HARM = [
+    N.E5,N.R,  N.G5,N.R,  N.C5,N.G5, N.E5,N.R,
+    N.R, N.C5, N.E5,N.R,  N.B4,N.R,  N.C5,N.B4,
+    N.A4,N.R,  N.C5,N.R,  N.E5,N.C5, N.A4,N.R,
+    N.R, N.B4, N.C5,N.R,  N.G4,N.R,  N.B4,N.G4,
+  ];
+
+  // ── Boss tension theme (for when Jimmy is alive) ───────────────────────
+  const BOSS_BASS = [
+    N.C3,N.R,N.C3,N.R, N.G3,N.R,N.G3,N.R,
+    N.A3,N.R,N.A3,N.R, N.G3,N.R,N.R, N.R,
+    N.F3,N.R,N.F3,N.R, N.C3,N.R,N.C3,N.R,
+    N.D3,N.R,N.E3,N.R, N.G3,N.R,N.R, N.R,
+  ];
+  const BOSS_LEAD = [
+    N.C4,N.R,N.D4,N.R, N.E4,N.D4,N.C4,N.R,
+    N.B3,N.R,N.C4,N.R, N.G3,N.R,N.R, N.R,
+    N.A3,N.R,N.B3,N.R, N.C4,N.B3,N.A3,N.R,
+    N.G3,N.R,N.A3,N.R, N.C4,N.R,N.R, N.R,
+  ];
+
+  // ── Win fanfare (one-shot 16 beats) ───────────────────────────────────
+  const WIN = [
+    N.C4,N.E4,N.G4,N.C5, N.E5,N.G5,N.C5,N.G4,
+    N.A4,N.C5,N.E5,N.A5, N.G5,N.E5,N.C5,N.G4,
+  ];
+
+  // ── Death sting (one-shot 8 beats) ────────────────────────────────────
+  const DEATH = [
+    N.G4,N.F4,N.E4,N.D4, N.C4,N.B3,N.A3,N.R,
+  ];
+
+  function init() {
+    if (ctx) return;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = ctx.createGain();
+    masterGain.gain.value = 0.18;
+    masterGain.connect(ctx.destination);
+  }
+
+  function makeOsc(type, freq, vol, start, dur, detune = 0) {
+    if (!freq || freq === N.R) return;
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    if (detune) osc.detune.value = detune;
+    gain.gain.setValueAtTime(vol, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + dur * 0.85);
+    osc.connect(gain);
+    gain.connect(masterGain);
+    osc.start(start);
+    osc.stop(start + dur);
+  }
+
+  function makeNoise(vol, start, dur) {
+    // White noise burst for snare/hi-hat
+    const buf  = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const src  = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    src.buffer = buf;
+    gain.gain.setValueAtTime(vol, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+    src.connect(gain);
+    gain.connect(masterGain);
+    src.start(start);
+    src.stop(start + dur);
+  }
+
+  function scheduleBar(barStart, bassNotes, leadNotes, harmNotes, isBoss) {
+    for (let i = 0; i < 32; i++) {
+      const t = barStart + i * S16;
+      // Bass — square wave, low
+      makeOsc('square', bassNotes[i], 0.5, t, S16 * 1.8);
+      // Lead — square wave
+      makeOsc('square', leadNotes[i], 0.35, t, S16 * 0.9);
+      // Harmony — sawtooth slightly detuned
+      if (harmNotes) makeOsc('sawtooth', harmNotes[i], 0.15, t, S16 * 0.85, 8);
+      // Drums every 8th beat = kick (sine thump) / snare on 2&4
+      if (i % 8 === 0) makeOsc('sine', 80, 0.8, t, S16 * 3);    // kick
+      if (i % 16 === 8) makeNoise(0.12, t, S16 * 1.5);           // snare
+      if (i % 4 === 2)  makeNoise(0.04, t, S16 * 0.4);           // hi-hat
+    }
+  }
+
+  let loopTimeout = null;
+  let loopRunning = false;
+
+  function startLoop(name) {
+    if (trackName === name && loopRunning) return;
+    stopLoop();
+    trackName = name;
+    loopRunning = true;
+    playing = true;
+
+    function tick() {
+      if (!loopRunning) return;
+      const now = ctx.currentTime;
+      const barDur = S16 * 32;
+      if (name === 'boss') {
+        scheduleBar(now, BOSS_BASS, BOSS_LEAD, null, true);
+      } else {
+        scheduleBar(now, BASS, LEAD, HARM, false);
+      }
+      loopTimeout = setTimeout(tick, barDur * 1000 - 50);
+    }
+    tick();
+  }
+
+  function stopLoop() {
+    loopRunning = false;
+    if (loopTimeout) { clearTimeout(loopTimeout); loopTimeout = null; }
+    trackName = '';
+  }
+
+  function oneShot(notes, volMult = 1) {
+    stopLoop();
+    const now = ctx.currentTime;
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * S16 * 2;
+      makeOsc('square', notes[i], 0.4 * volMult, t, S16 * 1.6);
+      if (notes[i] && i % 2 === 0) makeOsc('sine', notes[i] / 2, 0.3 * volMult, t, S16 * 2);
+    }
+  }
+
+  return {
+    init,
+    play(name) {
+      init();
+      if (ctx.state === 'suspended') ctx.resume();
+      if (name === 'win')   { oneShot(WIN,  1.2); return; }
+      if (name === 'death') { oneShot(DEATH, 0.9); return; }
+      startLoop(name);
+    },
+    stop()  { stopLoop(); },
+    setVolume(v) { if (masterGain) masterGain.gain.value = v; },
+  };
+})();
+
+function getTrackForState() {
+  // Switch to boss track when a full-size Jimmy is alive on screen
+  if (lvlData && lvlData.enemies) {
+    const hasJimmy = lvlData.enemies.some(e => !e.dead && e.type === 'jimmy' && (e.scale || 1) >= 1);
+    if (hasJimmy) return 'boss';
+  }
+  return 'main';
+}
+
 function startGame() {
   score = 0; lives = 3; level = 1;
   bombTimer = TIMER_START;
@@ -540,6 +721,7 @@ function startGame() {
   state = 'playing';
   hideOverlay();
   updateHUD();
+  Music.play('main');
 }
 
 function loadLevel() {
@@ -551,11 +733,12 @@ function loadLevel() {
 function nextLevel() {
   level++;
   if (level > 5) { winGame(); return; }
-  addTime(20 * 60); // +20s for reaching a flag
+  addTime(20 * 60);
   loadLevel();
   state = 'playing';
   hideOverlay();
   updateHUD();
+  Music.play('main');
 }
 
 // ── ADD TIME (added by Pratchetty) ─────────────────────────────────────────
@@ -566,6 +749,7 @@ function addTime(frames) {
 
 function winGame() {
   state = 'win';
+  Music.play('win');
   showOverlay(`🎉 YOU WIN! 🎉`, `Final Score: ${score}`, 'PRESS ENTER TO PLAY AGAIN');
 }
 
@@ -579,10 +763,12 @@ function playerDie() {
   if (lives <= 0) {
     state = 'gameover';
     deathTimer = 120;
+    Music.play('death');
     showOverlay('GAME OVER', `Score: ${score}`, 'PRESS ENTER TO RETRY');
   } else {
     deathTimer = 60;
     state = 'dead';
+    Music.play('death');
   }
 }
 
@@ -1928,9 +2114,17 @@ function drawEnemy(e) {
 }
 
 // ── GAME LOOP ─────────────────────────────────────────────────────────────
+let _lastTrack = '';
 function loop() {
   update();
   draw();
+  // Switch between main/boss track dynamically (added by Pratchetty)
+  if (state === 'playing') {
+    const t = getTrackForState();
+    if (t !== _lastTrack) { _lastTrack = t; Music.play(t); }
+  } else if (state !== 'dead') {
+    _lastTrack = '';
+  }
   requestAnimationFrame(loop);
 }
 
