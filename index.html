@@ -103,6 +103,84 @@
     margin-top: 6px;
     letter-spacing: 1px;
   }
+
+  /* ── MOBILE (added by Pratchetty) ───────────────────────────────────────── */
+  #gameWrapper {
+    position: relative;
+    display: inline-block;
+    touch-action: none;
+  }
+
+  #gameCanvas {
+    max-width: 100vw;
+    max-height: 60vh;
+    width: auto;
+    height: auto;
+  }
+
+  #touchControls {
+    display: none;
+    width: 100%;
+    max-width: 800px;
+    padding: 10px 6px 4px;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 8px;
+    user-select: none;
+  }
+
+  .touch-group {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  .touch-btn {
+    width: 68px;
+    height: 68px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.08s, transform 0.08s;
+    backdrop-filter: blur(4px);
+  }
+
+  .touch-btn:active, .touch-btn.pressed {
+    background: rgba(255,255,255,0.35);
+    transform: scale(0.92);
+    border-color: #fff;
+  }
+
+  .touch-btn.wide {
+    width: 90px;
+    border-radius: 34px;
+    font-size: 1.2rem;
+  }
+
+  #title {
+    font-size: clamp(0.7rem, 3.5vw, 2rem);
+  }
+
+  #hud {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 20px;
+    font-size: clamp(0.3rem, 1.8vw, 0.55rem);
+  }
+
+  @media (max-width: 600px) {
+    #touchControls { display: flex; }
+    #controls { display: none; }
+    #gameCanvas { max-height: 52vh; }
+    body { justify-content: flex-start; padding-top: 6px; overflow-y: auto; }
+  }
 </style>
 </head>
 <body>
@@ -116,8 +194,23 @@
   <div>AMMO: <span id="ammoDisplay">🔫—</span></div>
   <div>SQUASHIE: <span id="squashieDisplay">🍬—</span></div>
 </div>
+<div id="gameWrapper">
 <canvas id="gameCanvas" width="800" height="450"></canvas>
+</div>
 <div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗 &nbsp;|&nbsp; G / F — SHOOT 🔫</div>
+
+<!-- Touch controls (added by Pratchetty) -->
+<div id="touchControls">
+  <div class="touch-group">
+    <button class="touch-btn" id="btn-left">◀</button>
+    <button class="touch-btn" id="btn-right">▶</button>
+  </div>
+  <div class="touch-group">
+    <button class="touch-btn wide" id="btn-spit">🫗 SPIT</button>
+    <button class="touch-btn wide" id="btn-shoot">🔫 FIRE</button>
+    <button class="touch-btn" id="btn-jump">▲ JUMP</button>
+  </div>
+</div>
 
 <div id="overlay">
   <h2>🦙 MEDIOCRE LLAMA LEAP 🦙</h2>
@@ -474,12 +567,65 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
+// ── TOUCH CONTROLS (added by Pratchetty) ──────────────────────────────────
+function bindTouchBtn(id, keyCode, onPress) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  const press = (e) => {
+    e.preventDefault();
+    btn.classList.add('pressed');
+    if (onPress) { onPress(); return; }
+    keys[keyCode] = true;
+  };
+  const release = (e) => {
+    e.preventDefault();
+    btn.classList.remove('pressed');
+    if (!onPress) keys[keyCode] = false;
+  };
+  btn.addEventListener('touchstart', press, { passive: false });
+  btn.addEventListener('touchend',   release, { passive: false });
+  btn.addEventListener('touchcancel',release, { passive: false });
+  // also support mouse for desktop testing
+  btn.addEventListener('mousedown', press);
+  btn.addEventListener('mouseup',   release);
+  btn.addEventListener('mouseleave',release);
+}
+
+bindTouchBtn('btn-left',  'ArrowLeft');
+bindTouchBtn('btn-right', 'ArrowRight');
+bindTouchBtn('btn-jump',  'ArrowUp');
+bindTouchBtn('btn-spit',  null, () => { if (state === 'playing') trySpit(); });
+bindTouchBtn('btn-shoot', null, () => { if (state === 'playing') tryShoot(); });
+
+// Tap overlay to start/continue on mobile
+document.getElementById('overlay').addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (state === 'title' || state === 'gameover' || state === 'win') startGame();
+  else if (state === 'levelclear') nextLevel();
+}, { passive: false });
+
+// Scale canvas to fit screen while preserving aspect ratio
+function resizeCanvas() {
+  const canvas = document.getElementById('gameCanvas');
+  const wrapper = document.getElementById('gameWrapper');
+  const maxW = window.innerWidth;
+  const maxH = window.innerHeight * (window.innerWidth <= 600 ? 0.52 : 0.65);
+  const scaleW = maxW / 800;
+  const scaleH = maxH / 450;
+  const scale  = Math.min(scaleW, scaleH, 1);
+  canvas.style.width  = Math.floor(800 * scale) + 'px';
+  canvas.style.height = Math.floor(450 * scale) + 'px';
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
 function trySpit() {
   if (llama.spitCooldown > 0) return;
   llama.spitCooldown = 40;
   lvlData.spits.push({
-    x: llama.facing === 1 ? llama.x + llama.w : llama.x,
-    y: llama.y + 12,
+    x: llama.facing === 1 ? llama.x + llama.w : llama.x - 16,
+    y: llama.y + 10,
+    w: 16, h: 10,
     vx: llama.facing * 10,
     vy: -1,
     life: 60
@@ -493,8 +639,9 @@ function tryShoot() {
   llama.shootCooldown = 18;
   updateHUD();
   lvlData.bullets.push({
-    x: llama.facing === 1 ? llama.x + llama.w : llama.x,
-    y: llama.y + llama.h * 0.45,
+    x: llama.facing === 1 ? llama.x + llama.w : llama.x - 14,
+    y: llama.y + llama.h * 0.45 - 3,
+    w: 14, h: 6,
     vx: llama.facing * 16,
     life: 50
   });
