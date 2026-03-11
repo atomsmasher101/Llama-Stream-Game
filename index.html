@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLAMA LEAP 🦙</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:wght@400&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Press Start 2P', monospace;
+    overflow: hidden;
+  }
+
+  #title {
+    color: #f5c542;
+    font-size: 2rem;
+    text-shadow: 4px 4px #c0392b, 8px 8px #7d1a0f;
+    margin-bottom: 8px;
+    letter-spacing: 4px;
+    animation: titlePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes titlePulse {
+    0%, 100% { text-shadow: 4px 4px #c0392b, 8px 8px #7d1a0f; }
+    50% { text-shadow: 4px 4px #e74c3c, 8px 8px #c0392b, 0 0 30px #f5c542; }
+  }
+
+  #hud {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 8px;
+    color: #fff;
+    font-size: 0.55rem;
+  }
+
+  #hud span { color: #f5c542; }
+
+  #gameCanvas {
+    border: 3px solid #f5c542;
+    box-shadow: 0 0 30px rgba(245, 197, 66, 0.4), inset 0 0 30px rgba(0,0,0,0.5);
+    display: block;
+    image-rendering: pixelated;
+  }
+
+  #overlay {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    text-align: center;
+  }
+
+  #overlay h2 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 1.5rem;
+    color: #f5c542;
+    text-shadow: 3px 3px #c0392b;
+  }
+
+  #overlay p {
+    font-family: 'VT323', monospace;
+    font-size: 1.4rem;
+    color: #eee;
+    line-height: 1.6;
+  }
+
+  #overlay .blink {
+    animation: blink 1s step-end infinite;
+    color: #f5c542;
+    font-size: 1.2rem;
+  }
+
+  @keyframes blink { 50% { opacity: 0; } }
+
+  #controls {
+    color: #888;
+    font-size: 0.4rem;
+    margin-top: 6px;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div id="title">🦙 LLAMA LEAP 🦙</div>
+<div id="hud">
+  <div>SCORE: <span id="scoreDisplay">0</span></div>
+  <div>LIVES: <span id="livesDisplay">3</span></div>
+  <div>LEVEL: <span id="levelDisplay">1</span></div>
+</div>
+<canvas id="gameCanvas" width="800" height="450"></canvas>
+<div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗</div>
+
+<div id="overlay">
+  <h2>🦙 LLAMA LEAP 🦙</h2>
+  <p>Dodge spikes, stomp enemies,<br>and reach the flag!</p>
+  <p class="blink">PRESS ENTER TO START</p>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const W = canvas.width, H = canvas.height;
+
+// ── STATE ──────────────────────────────────────────────────────────────────
+let state = 'title'; // title | playing | dead | win
+let score = 0, lives = 3, level = 1;
+let frameCount = 0;
+
+// ── COLOURS ────────────────────────────────────────────────────────────────
+const SKY = ['#1a1a2e','#16213e','#0f3460'];
+const GROUND_TOP = '#7ec850';
+const GROUND_BOT = '#5a8f2e';
+const DIRT = '#8B6914';
+
+// ── LLAMA ──────────────────────────────────────────────────────────────────
+function makeLlama(x, y) {
+  return {
+    x, y, w: 38, h: 48,
+    vx: 0, vy: 0,
+    onGround: false,
+    facing: 1,
+    frame: 0,
+    frameTimer: 0,
+    dead: false,
+    invincible: 0,
+    spitCooldown: 0
+  };
+}
+
+// ── PHYSICS ────────────────────────────────────────────────────────────────
+const GRAVITY = 0.55, JUMP_F = -12, MOVE_SPD = 3.5;
+
+// ── LEVEL DATA ─────────────────────────────────────────────────────────────
+function buildLevel(n) {
+  const platforms = [
+    { x: 0,   y: 390, w: 800, h: 60, type: 'ground' },
+  ];
+  const hazards   = [];
+  const enemies   = [];
+  const coins     = [];
+  let flagX = 720;
+
+  if (n === 1) {
+    platforms.push(
+      { x: 150, y: 310, w: 100, h: 16, type: 'plat' },
+      { x: 300, y: 250, w: 100, h: 16, type: 'plat' },
+      { x: 460, y: 300, w: 100, h: 16, type: 'plat' },
+      { x: 600, y: 240, w: 120, h: 16, type: 'plat' },
+      { x: 50,  y: 220, w:  80, h: 16, type: 'plat' },
+    );
+    hazards.push(
+      { x: 240, y: 376, w: 24, h: 14, type: 'spike' },
+      { x: 400, y: 376, w: 24, h: 14, type: 'spike' },
+      { x: 540, y: 376, w: 24, h: 14, type: 'spike' },
+    );
+    enemies.push(
+      makeEnemy(350, 340, 'walker'),
+      makeEnemy(550, 280, 'walker'),
+      makeEnemy(200, 290, 'patroller', 150, 250),
+    );
+    coins.push(...coinRow(155, 295, 5), ...coinRow(305, 235, 4), ...coinRow(610, 225, 4));
+  } else if (n === 2) {
+    platforms.push(
+      { x: 100, y: 330, w:  80, h: 16, type: 'plat' },
+      { x: 230, y: 270, w:  80, h: 16, type: 'plat' },
+      { x: 360, y: 210, w:  80, h: 16, type: 'plat' },
+      { x: 490, y: 270, w:  80, h: 16, type: 'plat' },
+      { x: 600, y: 310, w: 120, h: 16, type: 'plat' },
+      { x: 50,  y: 200, w:  60, h: 16, type: 'plat' },
+      { x: 420, y: 140, w: 100, h: 16, type: 'plat' },
+    );
+    hazards.push(
+      { x: 180, y: 376, w: 24, h: 14, type: 'spike' },
+      { x: 320, y: 376, w: 24, h: 14, type: 'spike' },
+      { x: 450, y: 376, w: 24, h: 14, type: 'spike' },
+      { x: 580, y: 376, w: 24, h: 14, type: 'spike' },
+      { x: 115, y: 314, w: 16, h: 10, type: 'spike' },
+    );
+    enemies.push(
+      makeEnemy(240, 254, 'walker'),
+      makeEnemy(370, 194, 'walker'),
+      makeEnemy(500, 254, 'walker'),
+      makeEnemy(610, 294, 'patroller', 600, 700),
+      makeEnemy(300, 375, 'patroller', 200, 380),
+    );
+    coins.push(...coinRow(105, 315, 4), ...coinRow(235, 255, 4), ...coinRow(425, 125, 5));
+    flagX = 730;
+  } else {
+    // level 3 — chaos
+    platforms.push(
+      { x: 80,  y: 340, w: 70, h: 16, type: 'plat' },
+      { x: 210, y: 290, w: 70, h: 16, type: 'plat' },
+      { x: 340, y: 230, w: 70, h: 16, type: 'plat' },
+      { x: 470, y: 170, w: 70, h: 16, type: 'plat' },
+      { x: 570, y: 230, w: 70, h: 16, type: 'plat' },
+      { x: 650, y: 300, w: 130, h: 16, type: 'plat' },
+      { x: 200, y: 160, w:  60, h: 16, type: 'plat' },
+      { x: 350, y: 110, w:  60, h: 16, type: 'plat' },
+    );
+    for (let sx = 120; sx < 680; sx += 60)
+      hazards.push({ x: sx, y: 376, w: 24, h: 14, type: 'spike' });
+    enemies.push(
+      makeEnemy(220, 274, 'walker'),
+      makeEnemy(350, 214, 'walker'),
+      makeEnemy(480, 154, 'walker'),
+      makeEnemy(580, 214, 'walker'),
+      makeEnemy(660, 284, 'patroller', 650, 770),
+      makeEnemy(100, 375, 'patroller', 50, 200),
+    );
+    coins.push(...coinRow(215, 145, 3), ...coinRow(355, 95, 3), ...coinRow(475, 155, 3));
+    flagX = 740;
+  }
+
+  const flag = { x: flagX, y: 300, w: 20, h: 90 };
+
+  return { platforms, hazards, enemies, coins, flag, spits: [] };
+}
+
+function makeEnemy(x, y, type, patrolA, patrolB) {
+  return {
+    x, y: y - 28, w: 32, h: 28,
+    vx: type === 'patroller' ? 1.2 : 1.5,
+    type,
+    patrolA: patrolA ?? x - 60,
+    patrolB: patrolB ?? x + 60,
+    dead: false,
+    deadTimer: 0,
+    frame: 0,
+    frameTimer: 0,
+  };
+}
+
+function coinRow(startX, y, count) {
+  const c = [];
+  for (let i = 0; i < count; i++)
+    c.push({ x: startX + i * 24, y, w: 14, h: 14, collected: false });
+  return c;
+}
+
+// ── GAME VARS ───────────────────────────────────────────────────────────────
+let llama, lvlData, keys = {}, particles = [], screenShake = 0;
+let deathTimer = 0, winTimer = 0;
+
+function startGame() {
+  score = 0; lives = 3; level = 1;
+  loadLevel();
+  state = 'playing';
+  hideOverlay();
+  updateHUD();
+}
+
+function loadLevel() {
+  lvlData = buildLevel(level);
+  const start = lvlData.platforms.find(p => p.type === 'ground');
+  llama = makeLlama(60, start.y - 48);
+}
+
+function nextLevel() {
+  level++;
+  if (level > 3) { winGame(); return; }
+  loadLevel();
+  state = 'playing';
+  hideOverlay();
+  updateHUD();
+}
+
+function winGame() {
+  state = 'win';
+  showOverlay(`🎉 YOU WIN! 🎉`, `Final Score: ${score}`, 'PRESS ENTER TO PLAY AGAIN');
+}
+
+function playerDie() {
+  if (llama.invincible > 0 || llama.dead) return;
+  llama.dead = true;
+  lives--;
+  screenShake = 20;
+  spawnParticles(llama.x + llama.w/2, llama.y + llama.h/2, '#f5c542', 20);
+  updateHUD();
+  if (lives <= 0) {
+    state = 'gameover';
+    deathTimer = 120;
+    showOverlay('GAME OVER', `Score: ${score}`, 'PRESS ENTER TO RETRY');
+  } else {
+    deathTimer = 60;
+    state = 'dead';
+  }
+}
+
+function respawn() {
+  const start = lvlData.platforms.find(p => p.type === 'ground');
+  llama = makeLlama(60, start.y - 48);
+  state = 'playing';
+}
+
+// ── PARTICLES ───────────────────────────────────────────────────────────────
+function spawnParticles(x, y, color, count = 10) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const spd = 2 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * spd,
+      vy: Math.sin(a) * spd - 2,
+      life: 40 + Math.random() * 20,
+      maxLife: 60,
+      color,
+      r: 3 + Math.random() * 4
+    });
+  }
+}
+
+// ── HUD ─────────────────────────────────────────────────────────────────────
+function updateHUD() {
+  document.getElementById('scoreDisplay').textContent = score;
+  document.getElementById('livesDisplay').textContent = '🦙'.repeat(Math.max(0, lives));
+  document.getElementById('levelDisplay').textContent = level;
+}
+
+// ── OVERLAY ──────────────────────────────────────────────────────────────────
+function showOverlay(title, sub, cta) {
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `
+    <h2>${title}</h2>
+    <p>${sub || ''}</p>
+    ${cta ? `<p class="blink">${cta}</p>` : ''}
+  `;
+}
+function hideOverlay() { overlay.style.display = 'none'; }
+
+// ── INPUT ────────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Enter') {
+    if (state === 'title' || state === 'gameover' || state === 'win') startGame();
+  }
+  if (e.code === 'Space' && state === 'playing') {
+    e.preventDefault();
+    trySpit();
+  }
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function trySpit() {
+  if (llama.spitCooldown > 0) return;
+  llama.spitCooldown = 40;
+  lvlData.spits.push({
+    x: llama.facing === 1 ? llama.x + llama.w : llama.x,
+    y: llama.y + 12,
+    vx: llama.facing * 10,
+    vy: -1,
+    life: 60
+  });
+}
+
+// ── COLLISION HELPERS ────────────────────────────────────────────────────────
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// ── UPDATE ────────────────────────────────────────────────────────────────────
+function update() {
+  frameCount++;
+
+  if (state === 'dead') {
+    deathTimer--;
+    if (deathTimer <= 0) respawn();
+    updateParticles();
+    return;
+  }
+  if (state !== 'playing') { updateParticles(); return; }
+
+  const { platforms, hazards, enemies, coins, flag, spits } = lvlData;
+
+  // — Llama movement —
+  const left  = keys['ArrowLeft']  || keys['KeyA'];
+  const right = keys['ArrowRight'] || keys['KeyD'];
+  const jump  = keys['ArrowUp']    || keys['KeyW'] || keys['ArrowUp'];
+
+  if (left)  { llama.vx = -MOVE_SPD; llama.facing = -1; }
+  else if (right) { llama.vx =  MOVE_SPD; llama.facing =  1; }
+  else llama.vx *= 0.7;
+
+  llama.vy += GRAVITY;
+  llama.x += llama.vx;
+  llama.y += llama.vy;
+
+  // clamp left
+  if (llama.x < 0) llama.x = 0;
+
+  // — Platform collision —
+  llama.onGround = false;
+  for (const p of platforms) {
+    if (rectsOverlap(llama, p)) {
+      const fromBelow = llama.vy < 0;
+      const fromAbove = llama.vy >= 0;
+      const overlapX  = Math.min(llama.x + llama.w, p.x + p.w) - Math.max(llama.x, p.x);
+      const overlapY  = Math.min(llama.y + llama.h, p.y + p.h) - Math.max(llama.y, p.y);
+
+      if (overlapY < overlapX) {
+        if (fromAbove && llama.y + llama.h - llama.vy <= p.y + 2) {
+          llama.y = p.y - llama.h;
+          llama.vy = 0;
+          llama.onGround = true;
+        } else if (fromBelow) {
+          llama.y = p.y + p.h;
+          llama.vy = 0;
+        }
+      } else {
+        llama.x -= overlapX * Math.sign(llama.vx || 1);
+        llama.vx = 0;
+      }
+    }
+  }
+
+  // — Jump —
+  if (jump && llama.onGround) llama.vy = JUMP_F;
+
+  // — Fall off screen —
+  if (llama.y > H + 50) playerDie();
+
+  // — Hazard collision —
+  if (llama.invincible <= 0) {
+    for (const h of hazards) {
+      if (rectsOverlap(llama, h)) { playerDie(); break; }
+    }
+  }
+
+  // — Enemy update —
+  for (const e of enemies) {
+    if (e.dead) {
+      e.deadTimer--;
+      continue;
+    }
+    // patrol movement
+    e.x += e.vx;
+    if (e.x <= e.patrolA || e.x + e.w >= e.patrolB) e.vx *= -1;
+    // apply gravity-like snap to nearest platform
+    e.vy = (e.vy || 0) + GRAVITY;
+    e.y += e.vy;
+    for (const p of platforms) {
+      if (rectsOverlap(e, p)) {
+        const ov = Math.min(e.y + e.h, p.y + p.h) - Math.max(e.y, p.y);
+        if (e.vy >= 0 && e.y + e.h - e.vy <= p.y + 4) {
+          e.y = p.y - e.h;
+          e.vy = 0;
+        }
+      }
+    }
+    // enemy frame
+    e.frameTimer++;
+    if (e.frameTimer > 10) { e.frame = (e.frame + 1) % 2; e.frameTimer = 0; }
+
+    // stomp check
+    if (llama.invincible <= 0 && rectsOverlap(llama, e)) {
+      const stompZone = { x: e.x + 2, y: e.y, w: e.w - 4, h: 8 };
+      if (llama.vy > 0 && rectsOverlap({ x: llama.x, y: llama.y + llama.h - 12, w: llama.w, h: 12 }, stompZone)) {
+        e.dead = true; e.deadTimer = 30;
+        llama.vy = -8;
+        score += 100; updateHUD();
+        spawnParticles(e.x + e.w/2, e.y, '#e74c3c', 12);
+      } else {
+        playerDie();
+      }
+    }
+  }
+
+  // — Spit update —
+  for (let i = spits.length - 1; i >= 0; i--) {
+    const s = spits[i];
+    s.x += s.vx; s.y += s.vy;
+    s.life--;
+    if (s.life <= 0 || s.x < 0 || s.x > W) { spits.splice(i, 1); continue; }
+    for (const e of enemies) {
+      if (!e.dead && rectsOverlap(s, e)) {
+        e.dead = true; e.deadTimer = 30;
+        spits.splice(i, 1);
+        score += 150; updateHUD();
+        spawnParticles(e.x + e.w/2, e.y, '#27ae60', 12);
+        break;
+      }
+    }
+  }
+
+  // — Coins —
+  for (const c of coins) {
+    if (!c.collected && rectsOverlap(llama, c)) {
+      c.collected = true;
+      score += 50; updateHUD();
+      spawnParticles(c.x + 7, c.y + 7, '#f5c542', 8);
+    }
+  }
+
+  // — Flag (level end) —
+  if (rectsOverlap(llama, { x: flag.x, y: flag.y, w: flag.w, h: flag.h })) {
+    state = 'levelclear';
+    winTimer = 90;
+    score += 500 + level * 200;
+    updateHUD();
+    spawnParticles(flag.x + 10, flag.y + 45, '#f5c542', 30);
+    showOverlay(`LEVEL ${level} CLEAR! 🎉`, `Score: ${score}`, 'PRESS ENTER TO CONTINUE');
+  }
+
+  // — Invincibility —
+  if (llama.invincible > 0) llama.invincible--;
+  if (llama.spitCooldown > 0) llama.spitCooldown--;
+
+  // — Animate llama —
+  llama.frameTimer++;
+  if (llama.frameTimer > 8) { llama.frame = (llama.frame + 1) % 4; llama.frameTimer = 0; }
+
+  // — Screen shake decay —
+  if (screenShake > 0) screenShake -= 2;
+
+  updateParticles();
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.2;
+    p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// — Enter to advance level clear —
+document.addEventListener('keydown', e => {
+  if (e.code === 'Enter' && state === 'levelclear') {
+    nextLevel();
+  }
+});
+
+// ── DRAW ───────────────────────────────────────────────────────────────────
+function draw() {
+  const shake = screenShake > 0 ? (Math.random() - 0.5) * screenShake * 0.5 : 0;
+  ctx.save();
+  ctx.translate(shake, shake * 0.5);
+
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#0a0a1a');
+  sky.addColorStop(1, '#1a1a3e');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  for (let i = 0; i < 40; i++) {
+    const sx = ((i * 73 + frameCount * 0.05) % W);
+    const sy = (i * 53) % (H * 0.6);
+    const ss = (Math.sin(frameCount * 0.05 + i) + 1) * 0.5 + 0.5;
+    ctx.globalAlpha = ss * 0.8;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  if (!lvlData) { ctx.restore(); return; }
+  const { platforms, hazards, enemies, coins, flag, spits } = lvlData;
+
+  // Platforms
+  for (const p of platforms) {
+    if (p.type === 'ground') {
+      ctx.fillStyle = GROUND_TOP;
+      ctx.fillRect(p.x, p.y, p.w, 12);
+      ctx.fillStyle = DIRT;
+      ctx.fillRect(p.x, p.y + 12, p.w, p.h - 12);
+      // grass tufts
+      ctx.fillStyle = '#5cb85c';
+      for (let gx = p.x + 8; gx < p.x + p.w - 8; gx += 20) {
+        ctx.fillRect(gx, p.y - 3, 4, 5);
+        ctx.fillRect(gx + 8, p.y - 2, 3, 4);
+      }
+    } else {
+      // floating platform
+      ctx.fillStyle = '#6b4c11';
+      ctx.fillRect(p.x, p.y + 8, p.w, p.h);
+      ctx.fillStyle = GROUND_TOP;
+      ctx.fillRect(p.x, p.y, p.w, 10);
+      ctx.fillStyle = '#5cb85c';
+      ctx.fillRect(p.x + 2, p.y - 2, p.w - 4, 4);
+    }
+  }
+
+  // Hazards (spikes)
+  for (const h of hazards) {
+    ctx.fillStyle = '#c0392b';
+    const count = Math.floor(h.w / 8);
+    for (let i = 0; i < count; i++) {
+      ctx.beginPath();
+      ctx.moveTo(h.x + i * 8, h.y + h.h);
+      ctx.lineTo(h.x + i * 8 + 4, h.y);
+      ctx.lineTo(h.x + i * 8 + 8, h.y + h.h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = '#e74c3c';
+    for (let i = 0; i < count; i++) {
+      ctx.beginPath();
+      ctx.moveTo(h.x + i * 8 + 1, h.y + h.h - 2);
+      ctx.lineTo(h.x + i * 8 + 4, h.y + 2);
+      ctx.lineTo(h.x + i * 8 + 7, h.y + h.h - 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Coins
+  for (const c of coins) {
+    if (c.collected) continue;
+    const bob = Math.sin(frameCount * 0.1 + c.x) * 3;
+    ctx.save();
+    ctx.translate(c.x + 7, c.y + 7 + bob);
+    ctx.fillStyle = '#f5c542';
+    ctx.shadowBlur = 10; ctx.shadowColor = '#f5c542';
+    ctx.beginPath();
+    ctx.arc(0, 0, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e6b800';
+    ctx.font = '8px serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('$', 0, 1);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // Flag
+  const f = flag;
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(f.x + 8, f.y, 4, f.h);
+  // waving flag
+  const wave = Math.sin(frameCount * 0.1) * 4;
+  ctx.fillStyle = '#e74c3c';
+  ctx.beginPath();
+  ctx.moveTo(f.x + 12, f.y + 4);
+  ctx.quadraticCurveTo(f.x + 28 + wave, f.y + 14, f.x + 12, f.y + 24);
+  ctx.closePath(); ctx.fill();
+
+  // Enemies
+  for (const e of enemies) {
+    if (e.dead) {
+      if (e.deadTimer > 0) {
+        ctx.globalAlpha = e.deadTimer / 30;
+        ctx.fillStyle = '#e74c3c';
+        ctx.beginPath();
+        ctx.arc(e.x + e.w/2, e.y + e.h/2, e.w/2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      continue;
+    }
+    drawEnemy(e);
+  }
+
+  // Spits
+  for (const s of spits) {
+    ctx.fillStyle = '#2ecc71';
+    ctx.shadowBlur = 8; ctx.shadowColor = '#2ecc71';
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y, 8, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Llama
+  if (state === 'playing' || state === 'dead' || state === 'levelclear') {
+    const visible = state !== 'playing' || llama.invincible <= 0 || Math.floor(frameCount / 4) % 2 === 0;
+    if (visible) drawLlama(llama);
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * (p.life / p.maxLife), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawLlama(l) {
+  const x = l.x, y = l.y, w = l.w, h = l.h;
+  const dir = l.facing;
+  ctx.save();
+  if (dir === -1) {
+    ctx.translate(x + w, 0);
+    ctx.scale(-1, 1);
+    ctx.translate(-x, 0);
+  }
+
+  // Body
+  ctx.fillStyle = '#e8d5b0';
+  ctx.fillRect(x + 4, y + 18, w - 8, h - 22);
+
+  // Neck
+  ctx.fillRect(x + w - 16, y + 8, 10, 20);
+
+  // Head
+  ctx.fillStyle = '#e8d5b0';
+  ctx.fillRect(x + w - 18, y, 16, 14);
+
+  // Ear
+  ctx.fillStyle = '#c4a882';
+  ctx.fillRect(x + w - 14, y - 7, 5, 8);
+  ctx.fillRect(x + w - 8, y - 5, 4, 6);
+
+  // Eye
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(x + w - 10, y + 3, 3, 3);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(x + w - 9, y + 3, 1, 1);
+
+  // Snout
+  ctx.fillStyle = '#d4b896';
+  ctx.fillRect(x + w - 4, y + 6, 6, 6);
+  ctx.fillStyle = '#8B6914';
+  ctx.fillRect(x + w - 2, y + 9, 2, 2);
+
+  // Legs
+  const legOff = l.onGround ? (l.frame % 2 === 0 ? 2 : -2) : 0;
+  ctx.fillStyle = '#c4a882';
+  ctx.fillRect(x + 6,      y + h - 10 + legOff,  7, 10);
+  ctx.fillRect(x + 16,     y + h - 10 - legOff,  7, 10);
+  ctx.fillRect(x + w - 14, y + h - 10 - legOff,  7, 10);
+  ctx.fillRect(x + w - 8,  y + h - 10 + legOff,  7, 10);
+
+  // Tail
+  ctx.fillStyle = '#d4c4a0';
+  ctx.fillRect(x, y + 18, 6, 8);
+
+  // Spit glow when cooling down
+  if (l.spitCooldown > 30) {
+    ctx.globalAlpha = (l.spitCooldown - 30) / 10 * 0.5;
+    ctx.fillStyle = '#2ecc71';
+    ctx.beginPath();
+    ctx.arc(x + w + 2, y + 14, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  const x = e.x, y = e.y, w = e.w, h = e.h;
+  // Simple cactus-like enemy
+  ctx.fillStyle = '#27ae60';
+  ctx.fillRect(x + 8, y + 6, 16, h - 6);
+  ctx.fillRect(x, y + 12, 10, 8);
+  ctx.fillRect(x + w - 10, y + 10, 10, 8);
+  // Face
+  ctx.fillStyle = '#1a1a1a';
+  const blink = Math.floor(e.frameTimer / 5) % 8 === 0;
+  if (!blink) {
+    ctx.fillRect(x + 10, y + 10, 3, 3);
+    ctx.fillRect(x + 19, y + 10, 3, 3);
+  } else {
+    ctx.fillRect(x + 10, y + 12, 3, 1);
+    ctx.fillRect(x + 19, y + 12, 3, 1);
+  }
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillRect(x + 11, y + 17, 10, 2);
+  // Spines
+  ctx.fillStyle = '#145a32';
+  for (let i = 0; i < 4; i++) {
+    ctx.fillRect(x + 6 + i * 6, y + 3 + (i % 2) * 2, 2, 5);
+  }
+}
+
+// ── GAME LOOP ─────────────────────────────────────────────────────────────
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Init
+showOverlay('🦙 LLAMA LEAP 🦙', 'Dodge spikes, stomp enemies,<br>and reach the flag!', 'PRESS ENTER TO START');
+loop();
+</script>
+</body>
+</html>
