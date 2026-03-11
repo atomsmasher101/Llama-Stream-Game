@@ -1695,7 +1695,11 @@ function update() {
       if (rectsOverlap(llama, e)) {
         const stompZone = { x: e.x, y: e.y, w: e.w, h: Math.max(20, e.h * 0.4) };
         const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
-        if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone) && llama.squashiePower <= 0) {
+        // A stomp occurs when the llama's feet are over Jimmy's top zone AND
+        // either the llama is falling onto Jimmy (llama.vy > 0) OR Jimmy is
+        // jumping up into the llama (e.vy < 0).  Both represent head-to-feet
+        // contact — only the relative direction of travel differs.
+        if (rectsOverlap(llamaFeet, stompZone) && (llama.vy > 0 || e.vy < 0) && llama.squashiePower <= 0) {
           e.hp--;
           llama.vy = -10;
           score += 50; addTime(2 * 60); updateHUD();
