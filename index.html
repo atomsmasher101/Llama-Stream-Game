@@ -742,6 +742,7 @@ let gameOverCount   = 0;   // total game overs ever (for Middors scold index)
 const TIMER_START = 60 * 60; // 60 seconds at 60fps
 let bombTimer = TIMER_START;
 let atomicExplosion = null; // { frame, x, y } when triggered
+let atomicDeath = false;   // true after atomic annihilation — game-over drawn on canvas, not HTML overlay
 
 // ── CHIPTUNE MUSIC ENGINE (added by Pratchetty, extended by AtomSmasher101) ─
 const Music = (() => {
@@ -1133,6 +1134,7 @@ function startGame() {
   score = 0; lives = 3; level = 1;
   bombTimer = TIMER_START;
   atomicExplosion = null;
+  atomicDeath = false;
   waffles = [];
   gummyBears = [];
   particles = [];       // clear explosion/death particles so they don't bleed into the new game
@@ -1456,9 +1458,11 @@ function update() {
     if (atomicExplosion.frame > 180) {
       atomicExplosion = null;
       state = 'gameover';
-      gameOverCount++;   // atomic path bypasses playerDie() so increment here,
-      deathsOnLevel++;   // otherwise drawMiddors indexes MIDDORS_SCOLDS[-1] → TypeError
-      showOverlay('☢️ ATOMIC ANNIHILATION ☢️', `The llama is nuclear dust.<br>Score: ${score}`, 'PRESS ENTER TO RETRY');
+      atomicDeath = true;    // signals draw() to render the game-over text on canvas
+      gameOverCount++;       // atomic path bypasses playerDie() so increment here,
+      deathsOnLevel++;       // otherwise drawMiddors indexes MIDDORS_SCOLDS[-1] → TypeError
+      // Deliberately NOT calling showOverlay() here — the HTML overlay would sit
+      // on top of the canvas and hide Middors.  The message is drawn in draw() instead.
     }
     return;
   }
@@ -2656,7 +2660,31 @@ function draw() {
   // Drawn last so he appears on top of the atomic explosion screen.
   // Also shown during the explosion animation (atomicExplosion is set) so he's
   // visible the moment the screen darkens, not only after the state flips.
-  if (gameOverCount > 0 && (state === 'gameover' || atomicExplosion)) drawMiddors();
+  if (gameOverCount > 0 && (state === 'gameover' || atomicExplosion)) {
+    // For atomic deaths the game-over message is drawn here on canvas (not via
+    // the HTML overlay) so Middors can be painted on top of it afterwards.
+    if (atomicDeath) {
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowBlur = 20; ctx.shadowColor = '#ff4400';
+      ctx.fillStyle = '#f5c542';
+      ctx.font = 'bold 22px "Press Start 2P", monospace';
+      ctx.fillText('☢ ATOMIC ANNIHILATION ☢', W / 2, H / 2 - 38);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#eee';
+      ctx.font = '13px "VT323", monospace';
+      ctx.fillText(`The llama is nuclear dust.  Score: ${score}`, W / 2, H / 2 + 2);
+      ctx.fillStyle = '#f5c542';
+      ctx.font = '13px "VT323", monospace';
+      // blinking prompt using frameCount
+      if (Math.floor(frameCount / 30) % 2 === 0) {
+        ctx.fillText('PRESS ENTER TO RETRY', W / 2, H / 2 + 34);
+      }
+    }
+    drawMiddors();
+  }
 
   ctx.restore();
 }
