@@ -2816,23 +2816,33 @@ function drawMiddors() {
   ctx.translate(mx, my);
 
   // speech bubble (points left toward overlay)
-  ctx.fillStyle = 'rgba(255,255,240,0.95)';
-  ctx.strokeStyle = '#333'; ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.roundRect(-110, -70, 108, 65, 8);
-  ctx.fill(); ctx.stroke();
-  // bubble tail
-  ctx.fillStyle = 'rgba(255,255,240,0.95)';
-  ctx.beginPath();
-  ctx.moveTo(-30, -10); ctx.lineTo(-10, 5); ctx.lineTo(-20, -10);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
+ctx.fillStyle = 'rgba(255,255,240,0.95)';
+ctx.strokeStyle = '#333';
+ctx.lineWidth = 2;
+ctx.beginPath();
+// Increased width from 108 to 160, and moved X to -165 to keep it centered
+ctx.roundRect(-165, -70, 160, 65, 8); 
+ctx.fill();
+ctx.stroke();
 
-  // scold text
-  ctx.fillStyle = '#220000';
-  ctx.font = '5px "Press Start 2P", monospace';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  const lines = scold.split('\n');
-  lines.forEach((ln, i) => ctx.fillText(ln, -106, -64 + i * 13));
+// bubble tail
+ctx.fillStyle = 'rgba(255,255,240,0.95)';
+ctx.beginPath();
+ctx.moveTo(-30, -10);
+ctx.lineTo(-10, 5);
+ctx.lineTo(-20, -10);
+ctx.closePath();
+ctx.fill();
+ctx.stroke();
+
+// scold text
+ctx.fillStyle = '#220000';
+ctx.font = '5px "Press Start 2P", monospace';
+ctx.textAlign = 'center'; // Changed from 'left' to 'center'
+ctx.textBaseline = 'top';
+const lines = scold.split('\n');
+// Updated x-position to -85 (the center of the new 160px wide bubble)
+lines.forEach((ln, i) => ctx.fillText(ln, -85, -64 + i * 13));
 
   // body — lanky nerd
   // legs
