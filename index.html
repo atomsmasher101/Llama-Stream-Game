@@ -1144,8 +1144,10 @@ function update() {
   llama.x += llama.vx;
   llama.y += llama.vy;
 
-  // clamp left
-  if (llama.x < 0) llama.x = 0;
+  // clamp to screen edges — no falling off the sides or jumping out the top
+  if (llama.x < 0)            { llama.x = 0;              llama.vx = 0; }
+  if (llama.x + llama.w > W)  { llama.x = W - llama.w;    llama.vx = 0; }
+  if (llama.y < 0)            { llama.y = 0;               llama.vy = 0; }
 
   // — Platform collision —
   llama.onGround = false;
