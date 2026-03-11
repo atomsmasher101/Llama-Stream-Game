@@ -401,24 +401,19 @@
 
 <script>
 const canvas = document.getElementById('gameCanvas');
-// ── MOBILE CANVAS OPTIMISATIONS ───────────────────────────────────────────
-// alpha:false   → skip per-pixel alpha compositing (background is always drawn solid)
-// desynchronized → hint to browser it may present without waiting for the compositor
-const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+// alpha:false → skip per-pixel alpha compositing (background is always drawn solid)
+// Note: desynchronized is intentionally omitted — it behaves inconsistently
+// across laptop GPU drivers and can cause tearing on macOS/Windows Chrome.
+const ctx = canvas.getContext('2d', { alpha: false });
 const overlay = document.getElementById('overlay');
+// W and H are the fixed logical game dimensions (800×450).
+// The canvas buffer stays exactly this size on ALL devices.
+// image-rendering: pixelated (set in CSS) makes the browser upscale it
+// crisply on every screen — Retina, HiDPI, mobile — with zero fill-rate cost.
+// Inflating the buffer by devicePixelRatio (e.g. 2× on a MacBook = 1600×900)
+// would make every draw call 4× more expensive for no visual gain in a
+// pixel-art game, which is what caused the laptop slowdown.
 const W = canvas.width, H = canvas.height;
-
-// Respect device pixel ratio so the canvas is crisp on retina / high-DPR mobile
-// screens while keeping the *logical* resolution at 800×450.
-(function applyDPR() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap at 2× to save VRAM
-  if (dpr <= 1) return;
-  canvas.width  = 800 * dpr;
-  canvas.height = 450 * dpr;
-  canvas.style.width  = '800px';   // CSS logical size — resizeCanvas() will override
-  canvas.style.height = '450px';
-  ctx.scale(dpr, dpr);             // draw as if canvas were still 800×450
-})();
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 let state = 'title'; // title | playing | dead | win
