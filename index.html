@@ -1688,13 +1688,16 @@ function update() {
       if (e.frameTimer > 6) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
 
       // stomp check (needs 3 stomps to kill Jimmy)
-      if (llama.invincible <= 0 && llama.squashiePower <= 0 && rectsOverlap(llama, e)) {
+      // Invincibility must NOT gate the whole block — it only protects against
+      // taking damage.  If the stomp check were skipped while invincible, the
+      // bounce never fires and the llama falls back down onto Jimmy's body,
+      // taking a hit the moment invincibility expires.
+      if (rectsOverlap(llama, e)) {
         const stompZone = { x: e.x, y: e.y, w: e.w, h: Math.max(20, e.h * 0.4) };
         const llamaFeet = { x: llama.x + 4, y: llama.y + llama.h - 16, w: llama.w - 8, h: 16 };
-        if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone)) {
+        if (llama.vy > 0 && rectsOverlap(llamaFeet, stompZone) && llama.squashiePower <= 0) {
           e.hp--;
           llama.vy = -10;
-          llama.invincible = 40;
           score += 50; addTime(2 * 60); updateHUD();
           spawnParticles(e.x + e.w/2, e.y, '#00cc44', 14);
           if (e.hp <= 0) {
@@ -1702,7 +1705,7 @@ function update() {
             score += 500; addTime(10 * 60); updateHUD();
             spawnParticles(e.x + e.w/2, e.y + e.h/2, '#00ff88', 40);
           }
-        } else if (llama.invincible <= 0) {
+        } else if (llama.invincible <= 0 && llama.squashiePower <= 0) {
           playerDie();
         }
       }
