@@ -1181,7 +1181,7 @@ function addTime(frames) {
 function winGame() {
   state = 'win';
   Music.play('win');
-  showOverlay(`🎉 YOU WIN! 🎉`, `Final Score: ${score}`, 'PRESS ENTER TO PLAY AGAIN');
+  showOverlay(`🎉 YOU WIN! 🎉`, `Final Score: ${score}`, '');
 }
 
 function playerDie() {
@@ -1197,7 +1197,7 @@ function playerDie() {
     deathsOnLevel++;
     gameOverCount++;
     Music.play('death');
-    showOverlay('GAME OVER', `Score: ${score}`, 'PRESS ENTER TO RETRY');
+    showOverlay('GAME OVER', `Score: ${score}`, '');
   } else {
     deathTimer = 60;
     state = 'dead';
@@ -1276,9 +1276,10 @@ function hideOverlay() {
 // ── INPUT ────────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (e.code === 'Enter') {
-    if (state === 'title' || state === 'gameover' || state === 'win') startGame();
-  }
+  // Removed Enter key handling for autonomous operation
+  // if (e.code === 'Enter') {
+  //   if (state === 'title' || state === 'gameover' || state === 'win') startGame();
+  // }
   if (e.code === 'Space' && state === 'playing') {
     e.preventDefault();
     trySpit();
@@ -1384,12 +1385,12 @@ volSlider.addEventListener('input', () => {
   if (!muted) Music.setVolume(volume);
 });
 
-// Tap overlay to start/continue on mobile
-document.getElementById('overlay').addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  if (state === 'title' || state === 'gameover' || state === 'win') startGame();
-  else if (state === 'levelclear') nextLevel();
-}, { passive: false });
+// Tap overlay to start/continue on mobile (disabled for autonomous operation)
+// document.getElementById('overlay').addEventListener('touchstart', (e) => {
+//   e.preventDefault();
+//   if (state === 'title' || state === 'gameover' || state === 'win') startGame();
+//   else if (state === 'levelclear') nextLevel();
+// }, { passive: false });
 
 // Scale canvas to fit wrapper (AtomSmasher101 — works on all screen sizes)
 // Updated for DPR-aware buffer: CSS size always uses logical 800×450 ratios
@@ -1474,6 +1475,16 @@ function update() {
     updateParticles();
     return;
   }
+  
+  if (state === 'levelclear') {
+    winTimer--;
+    if (winTimer <= 0) {
+      nextLevel();
+    }
+    updateParticles();
+    return;
+  }
+  
   if (state !== 'playing') { updateParticles(); return; }
 
   // ── Tick bomb timer ────────────────────────────────────────────────────
@@ -1966,7 +1977,7 @@ function update() {
     addTime(20 * 60); // +20s for reaching the flag
     updateHUD();
     spawnParticles(flag.x + 10, flag.y + 45, '#f5c542', 30);
-    showOverlay(`LEVEL ${level} CLEAR! 🎉`, `Score: ${score} | +20s ⏱`, 'PRESS ENTER TO CONTINUE');
+    showOverlay(`LEVEL ${level} CLEAR! 🎉`, `Score: ${score} | +20s ⏱`, 'Moving to next level...');
   }
 
   // — SimpleHero AI companion (added by Pratchetty) —
@@ -1996,12 +2007,7 @@ function updateParticles() {
   }
 }
 
-// — Enter to advance level clear —
-document.addEventListener('keydown', e => {
-  if (e.code === 'Enter' && state === 'levelclear') {
-    nextLevel();
-  }
-});
+// — Automatic level advance handled in update() function —
 
 // ── DRAW ───────────────────────────────────────────────────────────────────
 function draw() {
@@ -2688,9 +2694,10 @@ function draw() {
       ctx.fillText(`The llama is nuclear dust.  Score: ${score}`, W / 2, H / 2 + 2);
       ctx.fillStyle = '#f5c542';
       ctx.font = '13px "VT323", monospace';
-      if (Math.floor(frameCount / 30) % 2 === 0) {
-        ctx.fillText('PRESS ENTER TO RETRY', W / 2, H / 2 + 34);
-      }
+      // Removed "PRESS ENTER TO RETRY" for autonomous operation
+      // if (Math.floor(frameCount / 30) % 2 === 0) {
+      //   ctx.fillText('PRESS ENTER TO RETRY', W / 2, H / 2 + 34);
+      // }
     }
     drawMiddors();
   }
