@@ -3943,15 +3943,10 @@ setTimeout(() => {
 }, 100);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INIT - AUTO START AI
+// INIT - AUTO START AI IMMEDIATELY
 // ═══════════════════════════════════════════════════════════════════════════
 requestAnimationFrame(loop);
-
-// Auto-start AI after a brief delay to ensure everything is loaded
-setTimeout(() => {
-  console.log('Auto-starting AI...');
-  startAI();
-}, 500);
+startAI();
 </script>
 </body>
 </html>
