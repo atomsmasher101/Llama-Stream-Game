@@ -3474,6 +3474,10 @@ class NeuralNetwork {
     nn.w2.set(this.w2);
     nn.b1.set(this.b1);
     nn.b2.set(this.b2);
+    nn.fitness = this.fitness || 0;
+    nn.deaths = this.deaths || 0;
+    nn.levelsCompleted = this.levelsCompleted || 0;
+    nn.enemiesKilled = this.enemiesKilled || 0;
     return nn;
   }
   
@@ -3529,7 +3533,8 @@ const AI = {
   inputSize: 50,
   hiddenSize: 32,
   outputSize: 6,
-  serverUrl: 'http://104.189.190.123:3000',
+  serverUrl: (new URLSearchParams(window.location.search).get('server')) || 
+             'https://llamagame-ai-server.wascomb.com',
   online: false,
   submitReady: true,
   
@@ -3611,14 +3616,21 @@ const AI = {
   },
   
   async submitNetwork(network) {
-    if (!this.online || !this.submitReady || !this.currentUrl) return;
-    if (!network || (network.fitness || 0) < 5000) return;
+    // Always try to submit regardless of online status
+    const url = this.currentUrl || this.serverUrl || 'http://localhost:3000';
+    if (!network || (network.fitness || 0) < 100) return;
+    if (!this.submitReady) {
+      console.log('Submission rate-limited, skipping');
+      return;
+    }
     
     this.submitReady = false;
-    setTimeout(() => { this.submitReady = true; }, 30000); // Rate limit: 30 sec
+    setTimeout(() => { this.submitReady = true; }, 10000); // Rate limit: 10 sec
+    
+    console.log(`Submitting network to ${url}...`);
     
     try {
-      const resp = await fetch(this.currentUrl + '/api/networks', {
+      const resp = await fetch(url + '/api/networks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3634,7 +3646,9 @@ const AI = {
       });
       if (resp.ok) {
         const data = await resp.json();
-        console.log(`Network submitted! Added: ${data.added}, Best: ${data.bestFitness}`);
+        console.log(`Network submitted! Added: ${data.added}, Rejected: ${data.rejected}, Best: ${data.bestFitness}`);
+      } else {
+        console.log(`Submit failed with status: ${resp.status}`);
       }
     } catch (e) {
       console.log('Failed to submit network:', e.message);
@@ -3851,8 +3865,11 @@ const AI = {
     for (const b of lvlData?.gingerBabies || []) if (b.collected && !b.scored) { b.scored = true; collectibleBonus += 300; }
     for (const p of lvlData?.bigPots || []) if (p.collected && !p.scored) { p.scored = true; collectibleBonus += 500; }
     
-    // Progress toward flag
-    let progressBonus = llama ? (llama.x / W) * 300 : 0;
+    // Progress toward flag (much higher reward)
+    let progressBonus = llama ? (llama.x / W) * 2000 : 0;
+    
+    // Movement bonus - reward for any movement (left or right)
+    const movementBonus = llama ? Math.abs(llama.vx) * 15 : 0;
     
     // Big bonus for killing Jimmy
     if (network.jimmyKilled) progressBonus += 2000;
@@ -3860,8 +3877,8 @@ const AI = {
     // Bonus for all coins
     if (network.allCoins) progressBonus += 1000;
     
-    // Survival bonus (avoiding death)
-    const survivalBonus = network.frames * 0.5;
+    // Minimal survival bonus (just to prevent instant death rewards)
+    const survivalBonus = Math.min(network.frames * 0.1, 100);
     
     // Penalty for dying
     const deathPenalty = network.deaths * 500;
@@ -3960,6 +3977,11 @@ function updateAI() {
   AI.updateFitness(currentNetwork);
   aiFrames++;
   
+  // Log fitness every 60 frames (~1 second)
+  if (aiFrames % 60 === 0) {
+    console.log(`[${aiFrames}] Fitness: ${currentNetwork.fitness.toFixed(0)} | Level: ${level}/${currentNetwork.levelsCompleted} | Score: ${score} | Enemies: ${currentNetwork.enemiesKilled}`);
+  }
+  
   // Check death or win
   if (state === 'dead' || state === 'gameover') {
     currentNetwork.alive = false;
@@ -3983,7 +4005,7 @@ function updateAI() {
       console.log(`🏆 GAME WON! Final score: ${score}`);
       
       // Submit best network before restart
-      if (currentNetwork.fitness > 5000) {
+      if (currentNetwork.fitness > 500) {
         AI.submitNetwork(currentNetwork);
       }
       
@@ -4014,19 +4036,10 @@ function respawnAI() {
     currentNetwork.alive = false;
     console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}`);
     
-    // Check if this was a good run worth saving
-    if (currentNetwork.fitness > 2000 || currentNetwork.jimmyKilled) {
-      // Save good networks
-      const goodNet = currentNetwork.clone();
-      if (!AI.bestNetwork || goodNet.fitness > AI.bestNetwork.fitness) {
-        AI.bestNetwork = goodNet;
-        console.log('New best network saved!');
-      }
-      
-      // Submit to server if fitness is good enough
-      if (currentNetwork.fitness > 5000) {
-        AI.submitNetwork(goodNet);
-      }
+    // Always submit if we have any fitness (for early training)
+    if (currentNetwork.fitness > 100) {
+      console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
+      AI.submitNetwork(currentNetwork.clone());
     }
     
     startGameForAI();
@@ -4069,6 +4082,12 @@ update = function() {
       // Wait a moment then restart
       if (!AI.restartTimer) {
         AI.restartTimer = 30; // frames to wait before restart
+        
+        // Submit network before restart
+        if (currentNetwork && currentNetwork.fitness > 100) {
+          console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
+          AI.submitNetwork(currentNetwork.clone());
+        }
       }
       AI.restartTimer--;
       if (AI.restartTimer <= 0) {
