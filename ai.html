@@ -3553,21 +3553,29 @@ const AI = {
   
   async checkServer() {
     // Try server URL
+    console.log('checkServer: attempting to connect to', this.serverUrl);
     try {
       const resp = await fetch(this.serverUrl + '/health', { cache: 'no-store' });
+      console.log('checkServer: response status:', resp.status, resp.statusText);
+      
       if (resp.ok) {
+        const data = await resp.json();
+        console.log('checkServer: health check response:', data);
         this.online = true;
         this.currentUrl = this.serverUrl;
-        console.log('Connected to AI server!');
+        console.log('checkServer: connected to AI server!');
         this.fetchServerNetworks();
         return true;
+      } else {
+        console.log('checkServer: health check failed, status:', resp.status);
       }
     } catch (e) {
-      console.log('Server unreachable');
+      console.error('checkServer: server unreachable:', e.message);
+      console.error('checkServer: error stack:', e.stack);
     }
     
     this.online = false;
-    console.log('Running in offline mode');
+    console.log('checkServer: running in offline mode');
     return false;
   },
   
@@ -3582,13 +3590,39 @@ const AI = {
   },
   
   async fetchServerNetworks() {
-    if (!this.online || !this.currentUrl) return;
+    if (!this.online || !this.currentUrl) {
+      console.log('fetchServerNetworks: offline or no currentUrl');
+      return;
+    }
+    
+    const url = this.currentUrl + '/api/networks?limit=10';
+    console.log('fetchServerNetworks: attempting to fetch from', url);
+    
     try {
-      const resp = await fetch(this.currentUrl + '/api/networks?limit=10', { cache: 'no-store' });
+      const resp = await fetch(url, { cache: 'no-store' });
+      console.log('fetchServerNetworks: response received, status:', resp.status, resp.statusText);
+      console.log('fetchServerNetworks: response headers:', Object.fromEntries(resp.headers.entries()));
+      
       if (resp.ok) {
-        const data = await resp.json();
+        // Get response text first for debugging
+        const responseText = await resp.text();
+        console.log('fetchServerNetworks: response text length:', responseText.length);
+        console.log('fetchServerNetworks: response text preview (first 200 chars):', responseText.substring(0, 200));
+        console.log('fetchServerNetworks: response text preview (last 200 chars):', responseText.substring(responseText.length - 200));
+        
+        // Try to parse JSON
+        let data;
+        try {
+          data = JSON.parse(responseText);
+          console.log('fetchServerNetworks: JSON parsed successfully');
+        } catch (parseError) {
+          console.error('fetchServerNetworks: JSON parsing failed:', parseError.message);
+          console.error('fetchServerNetworks: response text was:', responseText);
+          throw parseError;
+        }
+        
         if (data.networks && data.networks.length > 0) {
-          console.log(`Fetching ${data.networks.length} networks from server`);
+          console.log(`fetchServerNetworks: fetching ${data.networks.length} networks from server`);
           
           // Add server networks to population (replacing worst)
           for (const netData of data.networks) {
@@ -3607,51 +3641,74 @@ const AI = {
               this.population[worstIdx] = net;
             }
           }
-          console.log('Server networks integrated!');
+          console.log('fetchServerNetworks: server networks integrated!');
+        } else {
+          console.log('fetchServerNetworks: no networks found in response');
         }
+      } else {
+        console.log('fetchServerNetworks: response not ok, status:', resp.status);
+        const errorText = await resp.text();
+        console.log('fetchServerNetworks: error response:', errorText);
       }
     } catch (e) {
-      console.log('Failed to fetch server networks:', e.message);
+      console.error('fetchServerNetworks: failed with error:', e.message);
+      console.error('fetchServerNetworks: error stack:', e.stack);
     }
   },
   
   async submitNetwork(network) {
     // Always try to submit regardless of online status
     const url = this.currentUrl || this.serverUrl || 'http://localhost:3000';
-    if (!network || (network.fitness || 0) < 100) return;
+    if (!network || (network.fitness || 0) < 100) {
+      console.log('submitNetwork: skipping - network too weak or invalid');
+      return;
+    }
     if (!this.submitReady) {
-      console.log('Submission rate-limited, skipping');
+      console.log('submitNetwork: rate-limited, skipping');
       return;
     }
     
     this.submitReady = false;
     setTimeout(() => { this.submitReady = true; }, 10000); // Rate limit: 10 sec
     
-    console.log(`Submitting network to ${url}...`);
+    const submitUrl = url + '/api/networks';
+    console.log(`submitNetwork: submitting network to ${submitUrl}, fitness: ${network.fitness}`);
     
     try {
-      const resp = await fetch(url + '/api/networks', {
+      const requestBody = JSON.stringify({
+        networks: [{
+          fitness: network.fitness,
+          hiddenSize: network.hiddenSize || 48,
+          w1: Array.from(network.w1),
+          w2: Array.from(network.w2),
+          b1: Array.from(network.b1),
+          b2: Array.from(network.b2)
+        }]
+      });
+      
+      console.log(`submitNetwork: request body length: ${requestBody.length}`);
+      
+      const resp = await fetch(submitUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          networks: [{
-            fitness: network.fitness,
-            hiddenSize: network.hiddenSize || 48,
-            w1: Array.from(network.w1),
-            w2: Array.from(network.w2),
-            b1: Array.from(network.b1),
-            b2: Array.from(network.b2)
-          }]
-        })
+        body: requestBody
       });
+      
+      console.log('submitNetwork: response status:', resp.status, resp.statusText);
+      
       if (resp.ok) {
-        const data = await resp.json();
-        console.log(`Network submitted! Added: ${data.added}, Rejected: ${data.rejected}, Best: ${data.bestFitness}`);
+        const responseText = await resp.text();
+        console.log('submitNetwork: response text length:', responseText.length);
+        console.log('submitNetwork: response text preview:', responseText.substring(0, 200));
+        const data = JSON.parse(responseText);
+        console.log(`submitNetwork: network submitted! Added: ${data.added}, Rejected: ${data.rejected}, Best: ${data.bestFitness}`);
       } else {
-        console.log(`Submit failed with status: ${resp.status}`);
+        const errorText = await resp.text();
+        console.log(`submitNetwork: failed with status: ${resp.status}, response:`, errorText);
       }
     } catch (e) {
-      console.log('Failed to submit network:', e.message);
+      console.error('submitNetwork: failed with error:', e.message);
+      console.error('submitNetwork: error stack:', e.stack);
     }
   },
   
@@ -3833,12 +3890,32 @@ const AI = {
     network.reachedFlag = false;
     network.levelsCompleted = 0;
     network.wafflesEaten = 0;
+    // Stagnation tracking - to discourage staying in one place
+    network.lastX = 0;
+    network.stagnationFrames = 0;
+    network.maxStagnation = 0;
+    // Timeout tracking - to discourage running out of time
+    network.timeoutDeaths = 0;
   },
   
   updateFitness(network) {
     if (!network.alive) return;
     
     network.frames++;
+    
+    // Track stagnation - penalize staying in one place
+    if (llama) {
+      const currentX = llama.x;
+      const movedSignificantly = Math.abs(currentX - network.lastX) > 10; // Moved more than 10 pixels
+      
+      if (movedSignificantly) {
+        network.stagnationFrames = 0; // Reset if moving
+        network.lastX = currentX;
+      } else {
+        network.stagnationFrames++;
+        network.maxStagnation = Math.max(network.maxStagnation, network.stagnationFrames);
+      }
+    }
     
     // Level completion bonus - increases with each level!
     const levelBonus = network.levelsCompleted * 5000;
@@ -3869,7 +3946,8 @@ const AI = {
     let progressBonus = llama ? (llama.x / W) * 2000 : 0;
     
     // Movement bonus - reward for any movement (left or right)
-    const movementBonus = llama ? Math.abs(llama.vx) * 15 : 0;
+    // Increased to encourage exploration over camping
+    const movementBonus = llama ? Math.abs(llama.vx) * 25 : 0;
     
     // Big bonus for killing Jimmy
     if (network.jimmyKilled) progressBonus += 2000;
@@ -3883,7 +3961,25 @@ const AI = {
     // Penalty for dying
     const deathPenalty = network.deaths * 500;
     
-    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + survivalBonus - deathPenalty;
+    // Stagnation penalty - penalize for staying in one place
+    // Increases with stagnation time to discourage camping
+    const stagnationPenalty = network.stagnationFrames * 2;
+    
+    // Timeout penalty - steep penalty for running out of time
+    // This strongly discourages the "stand and shoot until time runs out" strategy
+    const timeoutPenalty = (network.timeoutDeaths || 0) * 5000;
+    
+    // Log high stagnation for debugging
+    if (network.stagnationFrames > 120 && network.stagnationFrames % 60 === 0) {
+      console.log(`AI stagnating: ${network.stagnationFrames} frames at same position (penalty: ${stagnationPenalty})`);
+    }
+    
+    // Log timeout deaths for debugging
+    if (network.timeoutDeaths > 0) {
+      console.log(`⚠️ Timeout deaths: ${network.timeoutDeaths}, penalty: ${timeoutPenalty}`);
+    }
+    
+    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus - deathPenalty - stagnationPenalty - timeoutPenalty;
     network.score = score;
     network.collectiblesCollected = collectibleBonus;
   }
@@ -4025,6 +4121,14 @@ function updateAI() {
 
 function respawnAI() {
   currentNetwork.deaths = (currentNetwork.deaths || 0) + 1;
+  
+  // Check if death was due to time running out (atomic explosion)
+  const diedFromTimeout = atomicDeath || (bombTimer <= 0 && atomicExplosion);
+  
+  if (diedFromTimeout) {
+    console.log(`⚠️ TIME-OUT DEATH! Applying steep penalty.`);
+    currentNetwork.timeoutDeaths = (currentNetwork.timeoutDeaths || 0) + 1;
+  }
   
   if (lives > 0 && currentNetwork.deaths < 3) {
     // Try to respawn but track the death
