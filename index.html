@@ -2664,12 +2664,10 @@ function draw() {
   }
 
   // ── MIDDORS game-over scold (added by AtomSmasher101) ──────────────────
-  // Drawn last so he appears on top of the atomic explosion screen.
-  // Also shown during the explosion animation (atomicExplosion is set) so he's
-  // visible the moment the screen darkens, not only after the state flips.
+  // Drawn outside the shake transform so he and his speech bubble are
+  // perfectly still during the atomic explosion screen shake.
+  ctx.restore();   // ← undoes the shake ctx.translate from the top of draw()
   if (gameOverCount > 0 && (state === 'gameover' || atomicExplosion)) {
-    // For atomic deaths the game-over message is drawn here on canvas (not via
-    // the HTML overlay) so Middors can be painted on top of it afterwards.
     if (atomicDeath) {
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
       ctx.fillRect(0, 0, W, H);
@@ -2685,15 +2683,12 @@ function draw() {
       ctx.fillText(`The llama is nuclear dust.  Score: ${score}`, W / 2, H / 2 + 2);
       ctx.fillStyle = '#f5c542';
       ctx.font = '13px "VT323", monospace';
-      // blinking prompt using frameCount
       if (Math.floor(frameCount / 30) % 2 === 0) {
         ctx.fillText('PRESS ENTER TO RETRY', W / 2, H / 2 + 34);
       }
     }
     drawMiddors();
   }
-
-  ctx.restore();
 }
 
 function drawLlama(l) {
