@@ -3478,12 +3478,21 @@ class NeuralNetwork {
     nn.deaths = this.deaths || 0;
     nn.levelsCompleted = this.levelsCompleted || 0;
     nn.enemiesKilled = this.enemiesKilled || 0;
+    nn.isExplorer = this.isExplorer || false;
     return nn;
   }
   
-  mutate(rate) {
+  mutate(rate, highVariance = false) {
+    const varianceMultiplier = highVariance ? 3.0 : 1.0;
     const mutateVal = (v) => {
-      if (Math.random() < rate) return v + (Math.random() * 2 - 1) * 0.3;
+      if (Math.random() < rate) {
+        // High variance mutation: larger changes, potentially completely random
+        if (highVariance && Math.random() < 0.2) {
+          // 20% chance of completely random reset for high variance
+          return (Math.random() * 2 - 1) * 0.5;
+        }
+        return v + (Math.random() * 2 - 1) * 0.3 * varianceMultiplier;
+      }
       return v;
     };
     for (let i = 0; i < this.w1.length; i++) this.w1[i] = mutateVal(this.w1[i]);
@@ -3546,7 +3555,6 @@ const AI = {
     this.generation = 0;
     this.active = true;
     this.hiddenSize = 48;
-    
     // Try to connect to server
     this.checkServer();
   },
@@ -3854,6 +3862,10 @@ const AI = {
     // Elitism - keep top 2
     const newPop = [best.clone(), this.population[1].clone()];
     
+    // Track exploration stats
+    let explorersCreated = 0;
+    const explorationRate = 0.15; // 15% of new population will be explorers
+    
     // Crossover and mutation
     while (newPop.length < this.population.length) {
       const parentA = this.population[Math.floor(Math.random() * this.population.length / 2)];
@@ -3867,13 +3879,32 @@ const AI = {
       for (let i = 0; i < child.w1.length; i++) {
         if (Math.random() < 0.5) child.w1[i] = parentB.w1[i];
       }
-      // Mutation
-      child.mutate(0.1);
+      
+      // Determine if this should be a high-variance explorer
+      const shouldExplore = Math.random() < explorationRate && newPop.length > 2;
+      
+      if (shouldExplore) {
+        // Create a high-variance explorer
+        child.mutate(0.3, true); // High mutation rate with high variance
+        child.isExplorer = true;
+        explorersCreated++;
+        console.log(`🔍 Created explorer network (gen ${this.generation})`);
+      } else {
+        // Normal mutation
+        child.mutate(0.1, false);
+        child.isExplorer = false;
+      }
+      
       newPop.push(child);
     }
     
     this.population = newPop;
     this.generation++;
+    
+    // Log exploration stats
+    if (explorersCreated > 0) {
+      console.log(`📊 Generation ${this.generation}: Created ${explorersCreated} explorers (${(explorersCreated/this.population.length*100).toFixed(1)}% of population)`);
+    }
   },
   
   resetForNewRun(network) {
@@ -3896,6 +3927,8 @@ const AI = {
     network.maxStagnation = 0;
     // Timeout tracking - to discourage running out of time
     network.timeoutDeaths = 0;
+    // Explorer tracking
+    network.isExplorer = network.isExplorer || false;
   },
   
   updateFitness(network) {
@@ -3969,6 +4002,20 @@ const AI = {
     // This strongly discourages the "stand and shoot until time runs out" strategy
     const timeoutPenalty = (network.timeoutDeaths || 0) * 5000;
     
+    // Explorer bonus - encourage exploration
+    // If this is an explorer network, give it a bonus for any progress
+    // This helps explorers survive even if they don't immediately outperform exploiters
+    let explorerBonus = 0;
+    if (network.isExplorer) {
+      // Bonus for discovering new areas (moving beyond current best)
+      const explorationBonus = Math.max(0, (llama ? llama.x : 0) - 200) * 2;
+      explorerBonus = explorationBonus;
+      // Log explorer performance
+      if (aiFrames % 120 === 0) {
+        console.log(`🔍 Explorer at x=${llama ? llama.x.toFixed(0) : 0}, fitness=${network.fitness.toFixed(0)}, bonus=${explorerBonus.toFixed(0)}`);
+      }
+    }
+    
     // Log high stagnation for debugging
     if (network.stagnationFrames > 120 && network.stagnationFrames % 60 === 0) {
       console.log(`AI stagnating: ${network.stagnationFrames} frames at same position (penalty: ${stagnationPenalty})`);
@@ -3979,7 +4026,7 @@ const AI = {
       console.log(`⚠️ Timeout deaths: ${network.timeoutDeaths}, penalty: ${timeoutPenalty}`);
     }
     
-    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus - deathPenalty - stagnationPenalty - timeoutPenalty;
+    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty;
     network.score = score;
     network.collectiblesCollected = collectibleBonus;
   }
@@ -3994,6 +4041,7 @@ function startAI() {
   console.log('Initializing AI population...');
   AI.init(30);
   AI.active = true;
+  
   console.log('Calling startGameForAI...');
   startGameForAI();
   console.log('startAI complete. State:', state, 'Level:', level, 'lvlData:', !!lvlData);
@@ -4095,12 +4143,12 @@ function updateAI() {
     hideOverlay();
     
     if (level >= 5) {
-      // Won the game! Submit network and start fresh
+      // Won the game! 
       currentNetwork.reachedFlag = true;
       currentNetwork.fitness += 15000;
       console.log(`🏆 GAME WON! Final score: ${score}`);
       
-      // Submit best network before restart
+      // Submit network
       if (currentNetwork.fitness > 500) {
         AI.submitNetwork(currentNetwork);
       }
@@ -4140,7 +4188,7 @@ function respawnAI() {
     currentNetwork.alive = false;
     console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}`);
     
-    // Always submit if we have any fitness (for early training)
+    // Submit network
     if (currentNetwork.fitness > 100) {
       console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
       AI.submitNetwork(currentNetwork.clone());
@@ -4153,16 +4201,20 @@ function respawnAI() {
 function showAIDebug() {
   const hud = document.getElementById('hud');
   const serverStatus = AI.online ? '🟢 ONLINE' : '🔴 OFFLINE';
+  const networkInfo = `${AI.population.indexOf(currentNetwork) + 1}/${AI.population.length}`;
+  const explorerStatus = currentNetwork.isExplorer ? '🔍 EXPLORER' : '⚙️  EXPLOITER';
+  
   hud.innerHTML = `
+    <div>MODE: TRAINING</div>
     <div>GEN: ${AI.generation}</div>
-    <div>NETWORK: ${AI.population.indexOf(currentNetwork) + 1}/${AI.population.length}</div>
+    <div>NETWORK: ${networkInfo} ${explorerStatus}</div>
     <div>LEVEL: ${currentNetwork.levelsCompleted}/5</div>
     <div>FITNESS: ${currentNetwork.fitness.toFixed(0)}</div>
     <div>SERVER: ${serverStatus}</div>
     <div>SCORE: ${score}</div>
     <div>FRAMES: ${aiFrames}</div>
   `;
-  hud.style.color = '#0f0';
+  hud.style.color = currentNetwork.isExplorer ? '#ffaa00' : '#0f0';
 }
 
 // Override update to include AI for all levels
