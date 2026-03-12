@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Llama AI - Network Monitor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0a1a;
+      color: #0f0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    h1 {
+      text-align: center;
+      color: #f5c542;
+      margin-bottom: 20px;
+      text-shadow: 2px 2px #c0392b;
+    }
+    
+    .status {
+      text-align: center;
+      padding: 15px;
+      margin-bottom: 20px;
+      background: #1a1a2e;
+      border-radius: 8px;
+      border: 2px solid #333;
+    }
+    
+    .status.online { border-color: #0f0; }
+    .status.offline { border-color: #f00; }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+    
+    .stat-box {
+      background: #16213e;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+      border: 1px solid #3C3B6E;
+    }
+    
+    .stat-box .value {
+      font-size: 2em;
+      color: #f5c542;
+    }
+    
+    .stat-box .label {
+      color: #888;
+      font-size: 0.9em;
+    }
+    
+    .networks {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 15px;
+    }
+    
+    .network-card {
+      background: #16213e;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #3C3B6E;
+    }
+    
+    .network-card .rank {
+      font-size: 1.5em;
+      color: #f5c542;
+      margin-bottom: 10px;
+    }
+    
+    .network-card .fitness {
+      font-size: 1.2em;
+      color: #0f0;
+      margin-bottom: 10px;
+    }
+    
+    .network-card .details {
+      color: #888;
+      font-size: 0.8em;
+    }
+    
+    .network-card .weights {
+      margin-top: 10px;
+      padding: 10px;
+      background: #0a0a1a;
+      border-radius: 4px;
+      font-size: 0.7em;
+      color: #666;
+      max-height: 100px;
+      overflow: auto;
+    }
+    
+    .refresh-btn {
+      display: block;
+      margin: 20px auto;
+      padding: 15px 40px;
+      font-size: 1.2em;
+      font-family: inherit;
+      background: #3C3B6E;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    
+    .refresh-btn:hover {
+      background: #5a5aaa;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #888;
+    }
+    
+    .server-url {
+      margin-top: 10px;
+      color: #666;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <h1>🦙 Llama AI - Network Monitor</h1>
+  
+  <div id="status" class="status">
+    <div class="loading">Connecting to server...</div>
+  </div>
+  
+  <div id="stats" class="stats" style="display: none;">
+    <div class="stat-box">
+      <div class="value" id="totalNetworks">0</div>
+      <div class="label">Total Networks</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="bestFitness">0</div>
+      <div class="label">Best Fitness</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="avgFitness">0</div>
+      <div class="label">Average Fitness</div>
+    </div>
+  </div>
+  
+  <button class="refresh-btn" onclick="fetchData()">🔄 Refresh</button>
+  
+  <div id="networks" class="networks"></div>
+  
+  <div class="server-url">
+    Server: <span id="serverUrl"></span>
+  </div>
+
+  <script>
+    const SERVER_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000'
+      : window.location.origin;
+    
+    document.getElementById('serverUrl').textContent = SERVER_URL;
+    
+    async function fetchData() {
+      const statusEl = document.getElementById('status');
+      const statsEl = document.getElementById('stats');
+      const networksEl = document.getElementById('networks');
+      
+      statusEl.className = 'status';
+      statusEl.innerHTML = '<div class="loading">Loading...</div>';
+      statsEl.style.display = 'none';
+      networksEl.innerHTML = '';
+      
+      try {
+        // Fetch health
+        const healthResp = await fetch(SERVER_URL + '/health');
+        if (!healthResp.ok) throw new Error('Server error');
+        const health = await healthResp.json();
+        
+        // Fetch stats
+        const statsResp = await fetch(SERVER_URL + '/api/stats');
+        const stats = await statsResp.json();
+        
+        // Fetch networks
+        const networksResp = await fetch(SERVER_URL + '/api/networks?limit=50');
+        const data = await networksResp.json();
+        
+        // Update status
+        statusEl.className = 'status online';
+        statusEl.innerHTML = `
+          <div style="color: #0f0; font-size: 1.2em;">🟢 Server Online</div>
+          <div>Uptime: ${Math.floor(health.uptime)}s</div>
+        `;
+        
+        // Update stats
+        document.getElementById('totalNetworks').textContent = stats.totalNetworks;
+        document.getElementById('bestFitness').textContent = Math.floor(stats.bestFitness);
+        document.getElementById('avgFitness').textContent = Math.floor(stats.averageFitness);
+        statsEl.style.display = 'grid';
+        
+        // Update networks
+        if (data.networks && data.networks.length > 0) {
+          networksEl.innerHTML = data.networks.map((net, i) => `
+            <div class="network-card">
+              <div class="rank">#${i + 1}</div>
+              <div class="fitness">Fitness: ${Math.floor(net.fitness)}</div>
+              <div class="details">
+                Hidden Size: ${net.hiddenSize || 48}<br>
+                Weights: w1[${net.w1?.length || 0}], w2[${net.w2?.length || 0}]<br>
+                ID: ${net.id?.substring(0, 8) || 'N/A'}
+              </div>
+              <div class="weights">
+                w1 sample: ${net.w1?.slice(0, 5).map(v => v.toFixed(3)).join(', ')}...<br>
+                w2 sample: ${net.w2?.slice(0, 5).map(v => v.toFixed(3)).join(', ')}...
+              </div>
+            </div>
+          `).join('');
+        } else {
+          networksEl.innerHTML = '<div style="text-align: center; color: #666;">No networks saved yet</div>';
+        }
+        
+      } catch (err) {
+        statusEl.className = 'status offline';
+        statusEl.innerHTML = `
+          <div style="color: #f00; font-size: 1.2em;">🔴 Server Offline</div>
+          <div>${err.message}</div>
+        `;
+      }
+    }
+    
+    // Auto-refresh every 10 seconds
+    fetchData();
+    setInterval(fetchData, 10000);
+  </script>
+</body>
+</html>
