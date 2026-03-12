@@ -89,7 +89,7 @@
   #overlay {
     position: absolute;
     inset: 0;
-    display: flex;
+    display: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -141,6 +141,7 @@
     min-height: 0;
     width: 100%;
     max-width: 800px;
+    background: #1a1a2e;
   }
 
   #touchControls {
@@ -340,7 +341,7 @@
   <div>WIG: <span id="wigDisplay">👶—</span></div>
 </div>
 <div id="gameWrapper">
-<canvas id="gameCanvas" width="800" height="450"></canvas>
+<canvas id="gameCanvas" width="800" height="450" style="background: #1a1a2e !important;"></canvas>
 </div>
 <div id="controls">ARROW KEYS / WASD — JUMP &amp; MOVE &nbsp;|&nbsp; SPACE — SPIT 🫗 &nbsp;|&nbsp; G / F — SHOOT 🔫 &nbsp;|&nbsp; M — MUTE 🔇</div>
 
@@ -358,7 +359,7 @@
   </div>
 </div>
 
-<div id="overlay">
+<div id="overlay" style="display: none !important;">
   <h2>🦙 MEDIOCRE LLAMA LEAP 🦙</h2>
   <p>Dodge spikes, stomp enemies,<br>and reach the flag!</p>
   <p class="blink">PRESS ENTER TO START</p>
@@ -416,7 +417,7 @@ const overlay = document.getElementById('overlay');
 const W = canvas.width, H = canvas.height;
 
 // ── STATE ──────────────────────────────────────────────────────────────────
-let state = 'title'; // title | playing | dead | win
+let state = 'playing'; // title | playing | dead | win
 let score = 0, lives = 3, level = 1;
 let frameCount = 0;
 
@@ -2004,6 +2005,10 @@ document.addEventListener('keydown', e => {
 
 // ── DRAW ───────────────────────────────────────────────────────────────────
 function draw() {
+  // Clear canvas with a default color
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, W, H);
+  
   const shake = screenShake > 0 ? (Math.random() - 0.5) * screenShake * 0.5 : 0;
   ctx.save();
   ctx.translate(shake, shake * 0.5);
@@ -3382,17 +3387,17 @@ const FIXED_DT  = 1 / 60;   // one logical game tick in seconds (matches origina
 const MAX_DELTA = 0.1;       // lag-spike cap: ignore anything beyond ~6 missed frames
 
 let _lastTrack  = '';
-let _lastTime   = 0;         // performance.now() of the previous frame
+let _lastTime   = -1;        // performance.now() of the previous frame (-1 to allow first frame)
 let _accumulator = 0;        // seconds of un-simulated time
 
 function loop(timestamp) {
   requestAnimationFrame(loop);   // schedule *before* work so we never miss a frame
 
   // ── First-frame bootstrap ───────────────────────────────────────────────
-  // On the very first call, _lastTime is 0 which would produce a rawDelta
+  // On the very first call, _lastTime is -1 which would produce a rawDelta
   // equal to the page's uptime (~100-2000 ms), causing an instant burst of
   // physics ticks.  Skip the first frame entirely to seed _lastTime cleanly.
-  if (_lastTime === 0) { _lastTime = timestamp; return; }
+  if (_lastTime === -1) { _lastTime = timestamp; return; }
 
   // ── Delta-time calculation ──────────────────────────────────────────────
   const rawDelta = (timestamp - _lastTime) * 0.001;  // ms → seconds
@@ -3524,6 +3529,10 @@ const AI = {
   inputSize: 50,
   hiddenSize: 32,
   outputSize: 6,
+  serverUrl: 'https://llamagame-ai-server.wascomb.com:3000',
+  fallbackUrl: 'http://localhost:3000',
+  online: false,
+  submitReady: true,
   
   init(populationSize = 40) {
     this.population = [];
@@ -3533,6 +3542,107 @@ const AI = {
     this.generation = 0;
     this.active = true;
     this.hiddenSize = 48;
+    
+    // Try to connect to server
+    this.checkServer();
+  },
+  
+  async checkServer() {
+    // Try main server URL first
+    try {
+      const resp = await fetch(this.serverUrl + '/health');
+      if (resp.ok) {
+        this.online = true;
+        this.currentUrl = this.serverUrl;
+        console.log('Connected to AI server (cloud)!');
+        this.fetchServerNetworks();
+        return;
+      }
+    } catch (e) {
+      console.log('Main server unreachable, trying localhost...');
+    }
+    
+    // Fallback to localhost
+    try {
+      const resp = await fetch(this.fallbackUrl + '/health');
+      if (resp.ok) {
+        this.online = true;
+        this.currentUrl = this.fallbackUrl;
+        console.log('Connected to AI server (localhost)!');
+        this.fetchServerNetworks();
+        return;
+      }
+    } catch (e) {
+      console.log('Local server also unreachable');
+    }
+    
+    this.online = false;
+    console.log('Running in offline mode');
+  },
+  
+  async fetchServerNetworks() {
+    if (!this.online || !this.currentUrl) return;
+    try {
+      const resp = await fetch(this.currentUrl + '/api/networks?limit=10');
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.networks && data.networks.length > 0) {
+          console.log(`Fetching ${data.networks.length} networks from server`);
+          
+          // Add server networks to population (replacing worst)
+          for (const netData of data.networks) {
+            const net = new NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
+            net.w1.set(netData.w1);
+            net.w2.set(netData.w2);
+            net.b1.set(netData.b1);
+            net.b2.set(netData.b2);
+            net.fitness = netData.fitness;
+            net.fromServer = true;
+            
+            // Replace worst networks
+            this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+            const worstIdx = this.population.length - 1;
+            if (!this.population[worstIdx] || (this.population[worstIdx].fitness || 0) < netData.fitness) {
+              this.population[worstIdx] = net;
+            }
+          }
+          console.log('Server networks integrated!');
+        }
+      }
+    } catch (e) {
+      console.log('Failed to fetch server networks:', e.message);
+    }
+  },
+  
+  async submitNetwork(network) {
+    if (!this.online || !this.submitReady || !this.currentUrl) return;
+    if (!network || (network.fitness || 0) < 5000) return;
+    
+    this.submitReady = false;
+    setTimeout(() => { this.submitReady = true; }, 30000); // Rate limit: 30 sec
+    
+    try {
+      const resp = await fetch(this.currentUrl + '/api/networks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          networks: [{
+            fitness: network.fitness,
+            hiddenSize: network.hiddenSize || 48,
+            w1: Array.from(network.w1),
+            w2: Array.from(network.w2),
+            b1: Array.from(network.b1),
+            b2: Array.from(network.b2)
+          }]
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        console.log(`Network submitted! Added: ${data.added}, Best: ${data.bestFitness}`);
+      }
+    } catch (e) {
+      console.log('Failed to submit network:', e.message);
+    }
   },
   
   getGameState() {
@@ -3567,7 +3677,7 @@ const AI = {
         inputs[idx++] = p.y / H;
         inputs[idx++] = p.w / W;
       } else {
-        inputs[idx++] = 0; inputs[idx++;] = 0; inputs[idx++] = 0;
+        inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
       }
     }
     
@@ -3772,9 +3882,12 @@ let aiScore = 0;
 
 function startAI() {
   console.log('Starting AI for all 5 levels...');
+  console.log('Initializing AI population...');
   AI.init(30);
   AI.active = true;
+  console.log('Calling startGameForAI...');
   startGameForAI();
+  console.log('startAI complete. State:', state, 'Level:', level, 'lvlData:', !!lvlData);
 }
 
 function startGameForAI() {
@@ -3897,6 +4010,11 @@ function respawnAI() {
         AI.bestNetwork = goodNet;
         console.log('New best network saved!');
       }
+      
+      // Submit to server if fitness is good enough
+      if (currentNetwork.fitness > 5000) {
+        AI.submitNetwork(goodNet);
+      }
     }
     
     startGameForAI();
@@ -3905,11 +4023,13 @@ function respawnAI() {
 
 function showAIDebug() {
   const hud = document.getElementById('hud');
+  const serverStatus = AI.online ? '🟢 ONLINE' : '🔴 OFFLINE';
   hud.innerHTML = `
     <div>GEN: ${AI.generation}</div>
     <div>NETWORK: ${AI.population.indexOf(currentNetwork) + 1}/${AI.population.length}</div>
     <div>LEVEL: ${currentNetwork.levelsCompleted}/5</div>
     <div>FITNESS: ${currentNetwork.fitness.toFixed(0)}</div>
+    <div>SERVER: ${serverStatus}</div>
     <div>SCORE: ${score}</div>
     <div>FRAMES: ${aiFrames}</div>
   `;
@@ -3919,8 +4039,25 @@ function showAIDebug() {
 // Override update to include AI for all levels
 const originalUpdate = update;
 update = function() {
-  if (state === 'playing' && AI.active) {
-    updateAI();
+  if (AI.active) {
+    // Handle AI when game is playing
+    if (state === 'playing') {
+      updateAI();
+    }
+    // Handle AI when game over or dead - auto restart
+    else if (state === 'dead' || state === 'gameover') {
+      // Wait a moment then restart
+      if (!AI.restartTimer) {
+        AI.restartTimer = 30; // frames to wait before restart
+      }
+      AI.restartTimer--;
+      if (AI.restartTimer <= 0) {
+        AI.restartTimer = null;
+        console.log('Auto-restarting after game over...');
+        hideOverlay(); // Hide game over overlay
+        startGameForAI(); // Start fresh with next network
+      }
+    }
   }
   originalUpdate();
 };
@@ -3945,8 +4082,28 @@ setTimeout(() => {
 // ═══════════════════════════════════════════════════════════════════════════
 // INIT - AUTO START AI IMMEDIATELY
 // ═══════════════════════════════════════════════════════════════════════════
-requestAnimationFrame(loop);
-startAI();
+
+// Force hide overlay immediately using multiple methods to ensure it works
+(function() {
+  var ol = document.getElementById('overlay');
+  if (ol) {
+    ol.style.display = 'none';
+  }
+  var title = document.getElementById('title');
+  if (title) {
+    title.style.visibility = 'visible';
+  }
+})();
+
+requestAnimationFrame(function(t) {
+  loop(t);
+});
+
+try {
+  startAI();
+} catch(e) {
+  console.error('Error starting AI:', e);
+}
 </script>
 </body>
 </html>
