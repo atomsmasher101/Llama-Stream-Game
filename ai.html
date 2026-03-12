@@ -3529,9 +3529,7 @@ const AI = {
   inputSize: 50,
   hiddenSize: 32,
   outputSize: 6,
-  serverUrl: 'http://llamagame-ai-server.wascomb.com:3000',
-  ipUrl: 'http://104.189.190.123:3000',
-  fallbackUrl: 'http://localhost:3000',
+  serverUrl: 'http://104.189.190.123:3000',
   online: false,
   submitReady: true,
   
@@ -3549,21 +3547,7 @@ const AI = {
   },
   
   async checkServer() {
-    // Try direct IP first (bypasses Cloudflare)
-    try {
-      const resp = await fetch(this.ipUrl + '/health');
-      if (resp.ok) {
-        this.online = true;
-        this.currentUrl = this.ipUrl;
-        console.log('Connected to AI server (direct IP)!');
-        this.fetchServerNetworks();
-        return true;
-      }
-    } catch (e) {
-      console.log('Direct IP unreachable, trying domain...');
-    }
-    
-    // Try domain URL
+    // Try server URL
     try {
       const resp = await fetch(this.serverUrl + '/health');
       if (resp.ok) {
@@ -3574,21 +3558,7 @@ const AI = {
         return true;
       }
     } catch (e) {
-      console.log('Server unreachable, trying localhost...');
-    }
-    
-    // Fallback to localhost
-    try {
-      const resp = await fetch(this.fallbackUrl + '/health');
-      if (resp.ok) {
-        this.online = true;
-        this.currentUrl = this.fallbackUrl;
-        console.log('Connected to AI server (localhost)!');
-        this.fetchServerNetworks();
-        return true;
-      }
-    } catch (e) {
-      console.log('Local server also unreachable');
+      console.log('Server unreachable');
     }
     
     this.online = false;
