@@ -3943,10 +3943,15 @@ setTimeout(() => {
 }, 100);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INIT
+// INIT - AUTO START AI
 // ═══════════════════════════════════════════════════════════════════════════
-showOverlay('🦙 MEDIOCRE LLAMA LEAP 🦙', 'Dodge spikes, stomp enemies,<br>and reach the flag!<br><br>🤖 Press ESC → START AI<br>AI plays ALL 5 levels!', 'PRESS ENTER TO START');
 requestAnimationFrame(loop);
+
+// Auto-start AI after a brief delay to ensure everything is loaded
+setTimeout(() => {
+  console.log('Auto-starting AI...');
+  startAI();
+}, 500);
 </script>
 </body>
 </html>
