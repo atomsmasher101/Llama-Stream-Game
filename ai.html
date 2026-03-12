@@ -3530,6 +3530,7 @@ const AI = {
   hiddenSize: 32,
   outputSize: 6,
   serverUrl: 'https://llamagame-ai-server.wascomb.com:3000',
+  httpUrl: 'http://llamagame-ai-server.wascomb.com:3000',
   fallbackUrl: 'http://localhost:3000',
   online: false,
   submitReady: true,
@@ -3548,18 +3549,32 @@ const AI = {
   },
   
   async checkServer() {
-    // Try main server URL first
+    // Try HTTPS first
     try {
       const resp = await fetch(this.serverUrl + '/health');
       if (resp.ok) {
         this.online = true;
         this.currentUrl = this.serverUrl;
-        console.log('Connected to AI server (cloud)!');
+        console.log('Connected to AI server (HTTPS)!');
         this.fetchServerNetworks();
-        return;
+        return true;
       }
     } catch (e) {
-      console.log('Main server unreachable, trying localhost...');
+      console.log('HTTPS unreachable, trying HTTP...');
+    }
+    
+    // Try HTTP
+    try {
+      const resp = await fetch(this.httpUrl + '/health');
+      if (resp.ok) {
+        this.online = true;
+        this.currentUrl = this.httpUrl;
+        console.log('Connected to AI server (HTTP)!');
+        this.fetchServerNetworks();
+        return true;
+      }
+    } catch (e) {
+      console.log('HTTP unreachable, trying localhost...');
     }
     
     // Fallback to localhost
@@ -3570,7 +3585,7 @@ const AI = {
         this.currentUrl = this.fallbackUrl;
         console.log('Connected to AI server (localhost)!');
         this.fetchServerNetworks();
-        return;
+        return true;
       }
     } catch (e) {
       console.log('Local server also unreachable');
@@ -3578,6 +3593,17 @@ const AI = {
     
     this.online = false;
     console.log('Running in offline mode');
+    return false;
+  },
+  
+  async reconnect() {
+    console.log('Attempting to reconnect to server...');
+    const connected = await this.checkServer();
+    if (connected) {
+      console.log('Reconnected successfully!');
+    } else {
+      console.log('Could not reconnect, continuing offline');
+    }
   },
   
   async fetchServerNetworks() {
@@ -3891,6 +3917,9 @@ function startAI() {
 }
 
 function startGameForAI() {
+  // Try to reconnect to server before starting
+  AI.reconnect();
+  
   // Start from level 1
   level = 1;
   score = 0; lives = 3;
@@ -3974,12 +4003,25 @@ function updateAI() {
     // Add huge fitness bonus for completing a level
     currentNetwork.fitness += (level * 3000);
     
+    // Hide overlay and continue automatically
+    hideOverlay();
+    
     if (level >= 5) {
-      // Won the game!
+      // Won the game! Submit network and start fresh
       currentNetwork.reachedFlag = true;
       currentNetwork.fitness += 15000;
       console.log(`🏆 GAME WON! Final score: ${score}`);
-      showAIDebug();
+      
+      // Submit best network before restart
+      if (currentNetwork.fitness > 5000) {
+        AI.submitNetwork(currentNetwork);
+      }
+      
+      // Wait briefly then start new run
+      setTimeout(() => {
+        console.log('Starting new training run...');
+        startGameForAI();
+      }, 2000);
     } else {
       // Continue to next level
       nextLevel();
@@ -4038,11 +4080,19 @@ function showAIDebug() {
 
 // Override update to include AI for all levels
 const originalUpdate = update;
+let reconnectCounter = 0;
 update = function() {
   if (AI.active) {
     // Handle AI when game is playing
     if (state === 'playing') {
       updateAI();
+      
+      // Periodically try to reconnect (every ~10 seconds)
+      reconnectCounter++;
+      if (reconnectCounter > 600 && !AI.online) {
+        reconnectCounter = 0;
+        AI.reconnect();
+      }
     }
     // Handle AI when game over or dead - auto restart
     else if (state === 'dead' || state === 'gameover') {
