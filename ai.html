@@ -3554,7 +3554,7 @@ const AI = {
   async checkServer() {
     // Try server URL
     try {
-      const resp = await fetch(this.serverUrl + '/health');
+      const resp = await fetch(this.serverUrl + '/health', { cache: 'no-store' });
       if (resp.ok) {
         this.online = true;
         this.currentUrl = this.serverUrl;
@@ -3584,7 +3584,7 @@ const AI = {
   async fetchServerNetworks() {
     if (!this.online || !this.currentUrl) return;
     try {
-      const resp = await fetch(this.currentUrl + '/api/networks?limit=10');
+      const resp = await fetch(this.currentUrl + '/api/networks?limit=10', { cache: 'no-store' });
       if (resp.ok) {
         const data = await resp.json();
         if (data.networks && data.networks.length > 0) {
