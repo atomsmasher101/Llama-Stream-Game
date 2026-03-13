@@ -3486,6 +3486,7 @@ class NeuralNetwork {
     nn.levelsCompleted = this.levelsCompleted || 0;
     nn.enemiesKilled = this.enemiesKilled || 0;
     nn.isExplorer = this.isExplorer || false;
+    nn.id = this.id || null; // Preserve original ID to prevent duplicate submissions
     return nn;
   }
   
@@ -3714,6 +3715,7 @@ const AI = {
     try {
       const requestBody = JSON.stringify({
         networks: [{
+          id: network.id || undefined, // Include original ID if present
           fitness: network.fitness,
           hiddenSize: network.hiddenSize || 48,
           w1: Array.from(network.w1),
