@@ -46,7 +46,10 @@ app.get('/api/networks', (req, res) => {
     w1: n.w1,
     w2: n.w2,
     b1: n.b1,
-    b2: n.b2
+    b2: n.b2,
+    producer: n.producer,
+    actionProfile: n.actionProfile,
+    trainingStats: n.trainingStats
   }));
 
   res.json({
@@ -195,8 +198,15 @@ function loadNetworks() {
       const parsed = JSON.parse(data);
       
       // Validate loaded networks and filter out any invalid entries
-      networks = parsed.filter(net => {
-        return isValidNetworkObject(net);
+      networks = parsed.filter(net => isValidNetworkObject(net)).map(net => {
+        const meta = inferMetadata(net);
+        return {
+          ...net,
+          hiddenSize: net.hiddenSize || 48,
+          producer: meta.producer,
+          actionProfile: meta.actionProfile,
+          trainingStats: meta.trainingStats,
+        };
       });
       
       const skipped = parsed.length - networks.length;
@@ -234,6 +244,22 @@ function isValidNetworkObject(net) {
   return true;
 }
 
+function inferMetadata(network) {
+  const actionProfile = network.actionProfile ||
+    ((network.trainingStats && (network.trainingStats.levelsCleared !== undefined || network.trainingStats.fullClears !== undefined))
+      ? 'movement3'
+      : 'full6');
+
+  const producer = network.producer ||
+    (actionProfile === 'movement3' ? 'fast_trainer' : 'ai');
+
+  return {
+    producer,
+    actionProfile,
+    trainingStats: network.trainingStats || null,
+  };
+}
+
 // Save networks to file
 function saveNetworks() {
   try {
@@ -269,6 +295,7 @@ function runTournamentSelection() {
 
 // Add a new network
 function addNetwork(network) {
+  const meta = inferMetadata(network);
   const newNetwork = {
     id: uuidv4(),
     fitness: network.fitness,
@@ -277,6 +304,9 @@ function addNetwork(network) {
     w2: network.w2,
     b1: network.b1,
     b2: network.b2,
+    producer: meta.producer,
+    actionProfile: meta.actionProfile,
+    trainingStats: meta.trainingStats,
     submittedAt: new Date().toISOString()
   };
 
@@ -322,7 +352,10 @@ app.get('/api/networks', (req, res) => {
     w1: n.w1,
     w2: n.w2,
     b1: n.b1,
-    b2: n.b2
+    b2: n.b2,
+    producer: n.producer,
+    actionProfile: n.actionProfile,
+    trainingStats: n.trainingStats
   }));
 
   res.json({
