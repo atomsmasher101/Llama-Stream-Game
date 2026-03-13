@@ -3998,18 +3998,18 @@ const AI = {
     
     // Collectibles collected (coins, powerups, guns)
     let collectibleBonus = 0;
-    for (const c of lvlData?.coins || []) if (c.collected && !c.scored) { c.scored = true; collectibleBonus += 100; }
-    for (const s of lvlData?.squashies || []) if (s.collected && !s.scored) { s.scored = true; collectibleBonus += 250; }
-    for (const g of lvlData?.guns || []) if (g.collected && !g.scored) { g.scored = true; collectibleBonus += 200; }
-    for (const b of lvlData?.gingerBabies || []) if (b.collected && !b.scored) { b.scored = true; collectibleBonus += 300; }
-    for (const p of lvlData?.bigPots || []) if (p.collected && !p.scored) { p.scored = true; collectibleBonus += 500; }
+    for (const c of lvlData?.coins || []) if (c.collected && !c.scored) { c.scored = true; collectibleBonus += 150; }
+    for (const s of lvlData?.squashies || []) if (s.collected && !s.scored) { s.scored = true; collectibleBonus += 400; }
+    for (const g of lvlData?.guns || []) if (g.collected && !g.scored) { g.scored = true; collectibleBonus += 300; }
+    for (const b of lvlData?.gingerBabies || []) if (b.collected && !b.scored) { b.scored = true; collectibleBonus += 500; }
+    for (const p of lvlData?.bigPots || []) if (p.collected && !p.scored) { p.scored = true; collectibleBonus += 750; }
     
     // Progress toward flag (much higher reward)
-    let progressBonus = llama ? (llama.x / W) * 2000 : 0;
+    let progressBonus = llama ? (llama.x / W) * 3000 : 0;
     
-    // Movement bonus - reward for any movement (left or right)
-    // Increased to encourage exploration over camping
-    const movementBonus = llama ? Math.abs(llama.vx) * 25 : 0;
+    // Movement bonus - reduced significantly to prevent "wiggle" farming
+    // Only reward significant movement, not tiny vibrations
+    const movementBonus = llama ? Math.abs(llama.vx) * 2 : 0;
     
     // Big bonus for killing Jimmy
     if (network.jimmyKilled) progressBonus += 2000;
@@ -4024,8 +4024,8 @@ const AI = {
     const deathPenalty = network.deaths * 500;
     
     // Stagnation penalty - penalize for staying in one place
-    // Increases with stagnation time to discourage camping
-    const stagnationPenalty = network.stagnationFrames * 2;
+    // Increased to discourage camping
+    const stagnationPenalty = network.stagnationFrames * 5;
     
     // Timeout penalty - steep penalty for running out of time
     // This strongly discourages the "stand and shoot until time runs out" strategy
