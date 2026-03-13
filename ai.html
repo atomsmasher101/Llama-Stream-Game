@@ -4349,15 +4349,18 @@ setTimeout(() => {
   }
 })();
 
-requestAnimationFrame(function(t) {
-  loop(t);
-});
-
-try {
-  startAI();
-} catch(e) {
-  console.error('Error starting AI:', e);
-}
+// Start game loop only after AI is initialized
+(async function() {
+  try {
+    await startAI();
+    // Now start the game loop
+    requestAnimationFrame(function(t) {
+      loop(t);
+    });
+  } catch(e) {
+    console.error('Error starting AI:', e);
+  }
+})();
 </script>
 </body>
 </html>
