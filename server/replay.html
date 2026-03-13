@@ -3624,6 +3624,10 @@ const AI = {
       this.replayNetwork.b2.set(networkData.b2);
       this.replayNetwork.fitness = networkData.fitness;
       this.replayNetwork.id = networkData.id;
+      this.replayNetwork.producer = networkData.producer || "unknown";
+      this.replayNetwork.actionProfile = networkData.actionProfile || "full6";
+      this.replayNetwork.trainingStats = networkData.trainingStats || null;
+      console.log(`Replay metadata: producer=${this.replayNetwork.producer}, actionProfile=${this.replayNetwork.actionProfile}, stats=${JSON.stringify(this.replayNetwork.trainingStats)}`);
       console.log('Replay network loaded successfully!');
       
       // Now that the network is loaded, start the game
@@ -3933,6 +3937,19 @@ const AI = {
     // Add some noise for exploration
     const noise = AI.replayMode ? 0 : 0.1;
     
+    const actionProfile = network?.actionProfile || "full6";
+
+    if (actionProfile === "movement3") {
+      return {
+        left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
+        right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
+        jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
+        jumpHeld: false,
+        spit: false,
+        shoot: false
+      };
+    }
+
     return {
       left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
       right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
@@ -4249,7 +4266,8 @@ function updateAI() {
   // Check death or win
   if (state === 'dead' || state === 'gameover') {
     currentNetwork.alive = false;
-    console.log(`Died on level ${level}! Score: ${score}, Enemies: ${currentNetwork.enemiesKilled}`);
+    const deathCause = atomicDeath ? "timeout_atomic" : (bombTimer <= 0 ? "timeout" : "collision_or_hazard");
+    console.log(`Died on level ${level}! Score: ${score}, Enemies: ${currentNetwork.enemiesKilled}, cause=${deathCause}, x=${llama?.x?.toFixed?.(1)}, y=${llama?.y?.toFixed?.(1)}, producer=${currentNetwork.producer || "unknown"}, actionProfile=${currentNetwork.actionProfile || "full6"}`);
     respawnAI();
   } else if (state === 'levelclear') {
     // Level completed!

@@ -3683,6 +3683,9 @@ const AI = {
               net.fitness = netData.fitness;
               net.fromServer = true;
               net.id = netData.id;
+              net.producer = netData.producer || "unknown";
+              net.actionProfile = netData.actionProfile || "full6";
+              net.trainingStats = netData.trainingStats || null;
 
               this.population.push(net);
               console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}, id: ${netData.id?.substring(0,8)}`);
@@ -3751,7 +3754,10 @@ const AI = {
           w1: Array.from(network.w1),
           w2: Array.from(network.w2),
           b1: Array.from(network.b1),
-          b2: Array.from(network.b2)
+          b2: Array.from(network.b2),
+          producer: "ai",
+          actionProfile: "full6",
+          trainingStats: { levelsCompleted: network.levelsCompleted || 0, levelFullClears: network.levelFullClears || 0 }
         }]
       });
       
@@ -3900,6 +3906,21 @@ const AI = {
     // Add some noise for exploration
     const noise = 0.1;
     
+    const actionProfile = network?.actionProfile || 'full6';
+
+    // fast_trainer networks only train movement outputs [0..2].
+    if (actionProfile === 'movement3') {
+      return {
+        left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
+        right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
+        jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
+        jumpHeld: false,
+        spit: false,
+        shoot: false,
+        down: false
+      };
+    }
+
     return {
       left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
       right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
@@ -4186,7 +4207,7 @@ function startGameForAI() {
   currentNetwork = AI.population[randomIdx];
   
   console.log(`Starting game with network ${randomIdx + 1}/${populationSize} (selected from first ${selectionSize})`);
-  console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}`);
+  console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}, producer: ${currentNetwork.producer || "unknown"}, actionProfile: ${currentNetwork.actionProfile || "full6"}`);
   
   AI.resetForNewRun(currentNetwork);
   

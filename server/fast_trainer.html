@@ -732,6 +732,9 @@ async function submitBest() {
           w2: Array.from(n.w2),
           b1: Array.from(n.b1),
           b2: Array.from(n.b2),
+          producer: "fast_trainer",
+          actionProfile: "movement3",
+          trainingStats: { levelsCleared: n.levelsCleared || 0, fullClears: n.fullClears || 0 },
         }))
       })
     });

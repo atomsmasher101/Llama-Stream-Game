@@ -3883,6 +3883,19 @@ const AI = {
     // Add some noise for exploration
     const noise = AI.replayMode ? 0 : 0.1;
     
+    const actionProfile = network?.actionProfile || "full6";
+
+    if (actionProfile === "movement3") {
+      return {
+        left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
+        right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
+        jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
+        jumpHeld: false,
+        spit: false,
+        shoot: false
+      };
+    }
+
     return {
       left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
       right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
@@ -4154,7 +4167,8 @@ function updateAI() {
   // Check death or win
   if (state === 'dead' || state === 'gameover') {
     currentNetwork.alive = false;
-    console.log(`Died on level ${level}! Score: ${score}, Enemies: ${currentNetwork.enemiesKilled}`);
+    const deathCause = atomicDeath ? "timeout_atomic" : (bombTimer <= 0 ? "timeout" : "collision_or_hazard");
+    console.log(`Died on level ${level}! Score: ${score}, Enemies: ${currentNetwork.enemiesKilled}, cause=${deathCause}, x=${llama?.x?.toFixed?.(1)}, y=${llama?.y?.toFixed?.(1)}, producer=${currentNetwork.producer || "unknown"}, actionProfile=${currentNetwork.actionProfile || "full6"}`);
     respawnAI();
   } else if (state === 'levelclear') {
     // Level completed!
