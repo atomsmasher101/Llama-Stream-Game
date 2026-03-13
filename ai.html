@@ -3519,22 +3519,22 @@ class NeuralNetwork {
     this.hidden = new Float32Array(this.hiddenSize);
     this.output = new Float32Array(this.outputSize);
     
-    // Hidden layer
+    // Hidden layer — tanh matches fast_trainer weight format
     for (let i = 0; i < this.hiddenSize; i++) {
       let sum = this.b1[i];
       for (let j = 0; j < this.inputSize; j++) {
         sum += inputs[j] * this.w1[j * this.hiddenSize + i];
       }
-      this.hidden[i] = this.relu(sum);
+      this.hidden[i] = Math.tanh(sum);
     }
     
-    // Output layer (6 outputs: left, right, jump, jumpHeld, spit, shoot)
+    // Output layer — tanh matches fast_trainer weight format
     for (let i = 0; i < this.outputSize; i++) {
       let sum = this.b2[i];
       for (let j = 0; j < this.hiddenSize; j++) {
         sum += this.hidden[j] * this.w2[j * this.outputSize + i];
       }
-      this.output[i] = this.sigmoid(sum);
+      this.output[i] = Math.tanh(sum);
     }
     
     return this.output;
@@ -3795,10 +3795,13 @@ const AI = {
     // Timer (danger indicator)
     inputs[idx++] = bombTimer / TIMER_START;
     
-    // Platforms - take top 8
+    // Platforms - nearest 8 sorted by distance from llama (matches fast_trainer)
+    const sortedPlats = lvlData.platforms.slice().sort(
+      (a, b) => Math.abs((a.x + a.w/2) - llama.x) - Math.abs((b.x + b.w/2) - llama.x)
+    );
     for (let i = 0; i < 8; i++) {
-      if (i < lvlData.platforms.length) {
-        const p = lvlData.platforms[i];
+      if (i < sortedPlats.length) {
+        const p = sortedPlats[i];
         inputs[idx++] = p.x / W;
         inputs[idx++] = p.y / H;
         inputs[idx++] = p.w / W;
@@ -3807,15 +3810,17 @@ const AI = {
       }
     }
     
-    // Enemies - take top 8
+    // Enemies - nearest 8 sorted by distance from llama, w/W + isGinger encoding (matches fast_trainer)
+    const sortedEnemies = lvlData.enemies.filter(e => !e.dead).sort(
+      (a, b) => Math.abs((a.x + a.w/2) - llama.x) - Math.abs((b.x + b.w/2) - llama.x)
+    );
     for (let i = 0; i < 8; i++) {
-      if (i < lvlData.enemies.length && !lvlData.enemies[i].dead) {
-        const e = lvlData.enemies[i];
+      if (i < sortedEnemies.length) {
+        const e = sortedEnemies[i];
         inputs[idx++] = e.x / W;
         inputs[idx++] = e.y / H;
-        inputs[idx++] = e.type === 'jimmy' ? 1 : (e.type === 'ginger' ? 0.5 : 0.25);
-        inputs[idx++] = e.type === 'volanradooga' ? 0.75 : 0;
-        if (e.type === 'jimmy') inputs[idx - 1] = 1 + (e.hp || 1) / 5;
+        inputs[idx++] = e.w / W;
+        inputs[idx++] = e.type === 'ginger' ? 1 : 0;
       } else {
         inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
       }
@@ -3883,16 +3888,14 @@ const AI = {
     const inputs = this.getGameState();
     const outputs = network.forward(inputs);
     
-    // Add some noise for exploration
-    const noise = 0.1;
-    
+    // Thresholds at 0 = tanh midpoint (equivalent to sigmoid > 0.5)
     return {
-      left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
-      right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
-      jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
-      jumpHeld: outputs[3] > 0.25,
-      spit: outputs[4] > 0.6 && llama.gunAmmo === 0,
-      shoot: outputs[5] > 0.7 && llama.gunAmmo > 0
+      left:     outputs[0] > 0,
+      right:    outputs[1] > 0,
+      jump:     outputs[2] > -0.1,
+      jumpHeld: outputs[3] > -0.25,
+      spit:     outputs[4] > 0.2  && llama.gunAmmo === 0,
+      shoot:    outputs[5] > 0.4  && llama.gunAmmo > 0
     };
   },
   
@@ -4043,7 +4046,7 @@ const AI = {
     const survivalBonus = Math.min(network.frames * 0.1, 100);
     
     // Penalty for dying - increased significantly to prevent "die to save points" strategy
-    const deathPenalty = network.deaths * 3000;
+    const deathPenalty = network.deaths * 10000;
     
     // Stagnation penalty - penalize for staying in one place
     // Increased to discourage camping
