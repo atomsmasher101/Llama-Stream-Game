@@ -3755,6 +3755,10 @@ const AI = {
     const inputs = new Float32Array(this.inputSize);
     let idx = 0;
     
+    // Level boundaries
+    inputs[idx++] = llama.x / W; // Distance from left edge (normalized)
+    inputs[idx++] = (W - llama.x - llama.w) / W; // Distance from right edge (normalized)
+    
     // Llama state (normalized to 0-1)
     inputs[idx++] = llama.x / W;
     inputs[idx++] = llama.y / H;
