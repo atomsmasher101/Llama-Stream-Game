@@ -213,6 +213,8 @@ const MAX_FRAMES = 2400; // 40 s at 60 fps
 
 function simulateNetwork(network, levelNum = 1) {
   const level = createLevel(levelNum);
+  const totalCoins = level.coins.length;
+  const totalEnemies = level.enemies.length;
 
   let x  = level.startX;
   let y  = level.startY;
@@ -454,31 +456,38 @@ function simulateNetwork(network, levelNum = 1) {
   // All rewards that the agent "earned" during the run.
   // Progress is relative to start so camping = zero.
   const progressReward = (maxX - startX) * 5;
-  const enemyBonus     = enemiesKilled * 250;
-  const coinBonus      = coinsCollected * 80;
+  const enemyBonus     = enemiesKilled * 450;
+  const coinBonus      = coinsCollected * 350;
   const scoreBonus     = score;
+
+  const enemyClearRatio = totalEnemies > 0 ? (enemiesKilled / totalEnemies) : 1;
+  const coinClearRatio = totalCoins > 0 ? (coinsCollected / totalCoins) : 1;
+  const clearQualityBonus = (enemyClearRatio + coinClearRatio) * 2200;
+  const fullClear = reachedFlag && enemiesKilled === totalEnemies && coinsCollected === totalCoins;
 
   // Survival multiplier: death deflates everything earned in the run to 20%.
   // This makes it impossible to "bank" kills and die profitably.
-  const survivalMult = alive ? 1.0 : 0.2;
+  const survivalMult = alive ? 1.0 : 0.15;
 
   const runReward = (progressReward + enemyBonus + coinBonus + scoreBonus) * survivalMult;
 
   // Flag bonuses are only reachable alive, so no multiplier needed.
-  const flagBonus       = reachedFlag ? 8000 : 0;
-  const efficiencyBonus = reachedFlag ? Math.max(0, (MAX_FRAMES - frames) * 0.5) : 0;
+  const flagBonus       = reachedFlag ? 7000 : 0;
+  const fullClearBonus  = fullClear ? 10000 : 0;
+  const efficiencyBonus = reachedFlag ? Math.max(0, (MAX_FRAMES - frames) * 0.8) : 0;
+  const incompleteClearPenalty = reachedFlag && !fullClear ? 2500 : 0;
 
   // Stagnation: every non-advancing frame costs points regardless of survival.
   const stagnationPenalty = totalStagnantFrames * 8;
 
   // Mild time pressure.
-  const timePenalty = frames * 0.1;
+  const timePenalty = frames * 0.2;
 
   // Negative fitness preserved for gradient — no Math.max(0,...) clamping.
-  const fitness = runReward + flagBonus + efficiencyBonus
-                - stagnationPenalty - timePenalty;
+  const fitness = runReward + clearQualityBonus + flagBonus + fullClearBonus + efficiencyBonus
+                - stagnationPenalty - timePenalty - incompleteClearPenalty;
 
-  return { fitness, score, coinsCollected, enemiesKilled, maxX, frames, alive, reachedFlag };
+  return { fitness, score, coinsCollected, enemiesKilled, maxX, frames, alive, reachedFlag, fullClear };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -487,16 +496,28 @@ function simulateNetwork(network, levelNum = 1) {
 //  This prevents the AI from over-fitting to a single level layout.
 // ═══════════════════════════════════════════════════════════════════════
 function evaluateNetwork(network) {
-  const r1 = simulateNetwork(network, 1);
-  const r2 = simulateNetwork(network, 2);
-  // Weighted: level 1 counts more because that's the first real level
+  const runs = [1, 2, 1, 2, 1].map(levelNum => simulateNetwork(network, levelNum));
+  const fullClears = runs.filter(r => r.fullClear).length;
+  const levelsCleared = runs.filter(r => r.reachedFlag).length;
+  const campaignBonus = (levelsCleared * 12000) + (fullClears * 9000);
+
+  // Weighted campaign score across 5 simulated stages.
+  const weightedFitness =
+    (runs[0].fitness * 1.0) +
+    (runs[1].fitness * 1.1) +
+    (runs[2].fitness * 1.2) +
+    (runs[3].fitness * 1.3) +
+    (runs[4].fitness * 1.4);
+
   return {
-    fitness:        r1.fitness * 0.6 + r2.fitness * 0.4,
-    reachedFlag:    r1.reachedFlag || r2.reachedFlag,
-    enemiesKilled:  r1.enemiesKilled + r2.enemiesKilled,
-    coinsCollected: r1.coinsCollected + r2.coinsCollected,
-    maxX:           Math.max(r1.maxX, r2.maxX),
-    alive:          r1.alive && r2.alive,
+    fitness:        (weightedFitness / 6) + campaignBonus,
+    reachedFlag:    levelsCleared >= 5,
+    enemiesKilled:  runs.reduce((sum, r) => sum + r.enemiesKilled, 0),
+    coinsCollected: runs.reduce((sum, r) => sum + r.coinsCollected, 0),
+    maxX:           Math.max(...runs.map(r => r.maxX)),
+    alive:          runs.every(r => r.alive),
+    levelsCleared,
+    fullClears,
   };
 }
 
@@ -579,7 +600,7 @@ function evolve() {
     document.getElementById('statBestLocal').textContent = Math.floor(localBestFitness);
   }
 
-  log(`Gen ${generation} — best: ${best.fitness.toFixed(0)}  alive: ${best.alive ? '✓' : '✗'}  flag: ${best.reachedFlag ? '🏁' : '-'}`,
+  log(`Gen ${generation} — best: ${best.fitness.toFixed(0)}  alive: ${best.alive ? '✓' : '✗'}  cleared: ${best.levelsCleared || 0}/5  full: ${best.fullClears || 0}/5  campaign: ${best.reachedFlag ? '🏆' : '-'}`,
       best.reachedFlag ? 'good' : best.fitness > 0 ? '' : 'bad');
 
   const newPop = [];
@@ -633,8 +654,10 @@ async function runBatch() {
       population[i].enemiesKilled  = result.enemiesKilled;
       population[i].coinsCollected = result.coinsCollected;
       population[i].maxX           = result.maxX;
-      totalSimulations += 2;   // evaluated on 2 levels
-      simsSinceLastFps += 2;
+      population[i].levelsCleared  = result.levelsCleared;
+      population[i].fullClears     = result.fullClears;
+      totalSimulations += 5;   // evaluated on 5 simulated campaign stages
+      simsSinceLastFps += 5;
       resolve();
     }, 0));
   }

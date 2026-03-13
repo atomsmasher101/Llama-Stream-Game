@@ -3978,6 +3978,7 @@ const AI = {
     network.maxStagnation = 0;
     // Timeout tracking - to discourage running out of time
     network.timeoutDeaths = 0;
+    network.levelFullClears = 0;
     // Explorer tracking
     network.isExplorer = network.isExplorer || false;
   },
@@ -4001,12 +4002,12 @@ const AI = {
       }
     }
     
-    // Level completion bonus - increases with each level!
-    const levelBonus = network.levelsCompleted * 5000;
+    // Level completion bonus - heavily prioritize campaign progression (all 5 levels)
+    const levelBonus = network.levelsCompleted * 12000;
     
     const scoreBonus = score * 3;
     
-    // Enemies killed - weighted heavily for Jimmy
+    // Enemies killed - useful, but completion is still the top objective
     let enemyBonus = 0;
     for (const e of lvlData?.enemies || []) {
       if (e.dead && e.deadTimer === 30 && !e.scored) {
@@ -4026,8 +4027,24 @@ const AI = {
     for (const b of lvlData?.gingerBabies || []) if (b.collected && !b.scored) { b.scored = true; collectibleBonus += 500; }
     for (const p of lvlData?.bigPots || []) if (p.collected && !p.scored) { p.scored = true; collectibleBonus += 750; }
     
-    // Progress toward flag (much higher reward)
+    // Progress toward flag
     let progressBonus = llama ? (llama.x / W) * 3000 : 0;
+
+    // Level-completion quality: prefer full clears (all enemies + all collectibles)
+    const totalEnemies = (lvlData?.enemies || []).length;
+    const deadEnemies = (lvlData?.enemies || []).filter(e => e.dead).length;
+    const enemyClearRatio = totalEnemies > 0 ? (deadEnemies / totalEnemies) : 1;
+
+    const levelCollectibles = [
+      ...(lvlData?.coins || []),
+      ...(lvlData?.squashies || []),
+      ...(lvlData?.guns || []),
+      ...(lvlData?.gingerBabies || []),
+      ...(lvlData?.bigPots || []),
+    ];
+    const collectedItems = levelCollectibles.filter(item => item.collected).length;
+    const collectibleClearRatio = levelCollectibles.length > 0 ? (collectedItems / levelCollectibles.length) : 1;
+    const clearQualityBonus = (enemyClearRatio + collectibleClearRatio) * 1800;
     
     // Movement bonus - reduced significantly to prevent "wiggle" farming
     // Only reward significant movement, not tiny vibrations
@@ -4038,6 +4055,12 @@ const AI = {
     
     // Bonus for all coins
     if (network.allCoins) progressBonus += 1000;
+
+    // Bonus for fully clearing completed levels
+    const fullClearBonus = (network.levelFullClears || 0) * 5000;
+
+    // Penalize ending runs without campaign progress
+    const noLevelProgressPenalty = network.levelsCompleted === 0 ? 2500 : 0;
     
     // Minimal survival bonus (just to prevent instant death rewards)
     const survivalBonus = Math.min(network.frames * 0.1, 100);
@@ -4053,9 +4076,8 @@ const AI = {
     // This strongly discourages the "stand and shoot until time runs out" strategy
     const timeoutPenalty = (network.timeoutDeaths || 0) * 5000;
     
-    // Time penalty - penalize for taking too long to complete
-    // Encourages faster completion (1 point per frame after initial buffer)
-    const timePenalty = Math.max(0, (network.frames - 300) * 1);
+    // Time penalty - keep pressure to complete quickly
+    const timePenalty = Math.max(0, (network.frames - 240) * 1.2);
     
     // Explorer bonus - encourage exploration
     // If this is an explorer network, give it a bonus for any progress
@@ -4081,7 +4103,7 @@ const AI = {
       console.log(`⚠️ Timeout deaths: ${network.timeoutDeaths}, penalty: ${timeoutPenalty}`);
     }
     
-    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty;
+    network.fitness = levelBonus + fullClearBonus + clearQualityBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty - noLevelProgressPenalty;
     network.score = score;
     network.collectiblesCollected = collectibleBonus;
   }
@@ -4168,7 +4190,7 @@ function updateAI() {
   
   // Track collectibles
   for (const c of lvlData.coins) {
-    if (!c.collected && !c.tracked) {
+    if (c.collected && !c.tracked) {
       c.tracked = true;
       currentNetwork.coinsCollected++;
     }
@@ -4212,10 +4234,29 @@ function updateAI() {
   } else if (state === 'levelclear') {
     // Level completed!
     currentNetwork.levelsCompleted = level;
+
+    const allEnemiesDead = lvlData.enemies.every(e => e.dead);
+    const allCollectiblesCollected = [
+      ...lvlData.coins,
+      ...(lvlData.squashies || []),
+      ...(lvlData.guns || []),
+      ...(lvlData.gingerBabies || []),
+      ...(lvlData.bigPots || []),
+    ].every(item => item.collected);
+
+    if (allEnemiesDead && allCollectiblesCollected) {
+      currentNetwork.levelFullClears = (currentNetwork.levelFullClears || 0) + 1;
+      currentNetwork.fitness += 5000 + (level * 1000);
+      console.log(`✅ Level ${level} FULL CLEAR (enemies + collectibles)!`);
+    } else {
+      currentNetwork.fitness -= 1200;
+      console.log(`⚠️ Level ${level} cleared without full cleanup.`);
+    }
+
     console.log(`🎉 Level ${level} COMPLETE! Total score: ${score}`);
     
     // Add huge fitness bonus for completing a level
-    currentNetwork.fitness += (level * 3000);
+    currentNetwork.fitness += (level * 7000);
     
     // Hide overlay and continue automatically
     hideOverlay();
@@ -4223,7 +4264,8 @@ function updateAI() {
     if (level >= 5) {
       // Won the game! 
       currentNetwork.reachedFlag = true;
-      currentNetwork.fitness += 15000;
+      const campaignCompletionBonus = currentNetwork.levelFullClears >= 5 ? 60000 : 35000;
+      currentNetwork.fitness += campaignCompletionBonus;
       console.log(`🏆 GAME WON! Final score: ${score}`);
       
       // Submit network
