@@ -267,13 +267,13 @@
                 <div class="fitness">Fitness: ${Math.floor(net.fitness)}</div>
                 <div class="details">
                   Hidden Size: ${net.hiddenSize || 48}<br>
-                  Weights: w1[${net.w1?.length || 0}], w2[${net.w2?.length || 0}]<br>
-                  ID: ${net.id?.substring(0, 8) || 'N/A'}<br>
+                  Weights: w1[${(net.w1 ? net.w1.length : 0)}], w2[${(net.w2 ? net.w2.length : 0)}]<br>
+                  ID: ${(net.id ? net.id.substring(0, 8) : 'N/A')}<br>
                   Producer: ${net.producer || 'unknown'} (${net.actionProfile || 'n/a'})
                 </div>
                 <div class="weights">
-                  w1 sample: ${net.w1?.slice(0, 5).map(v => v.toFixed(3)).join(', ')}...<br>
-                  w2 sample: ${net.w2?.slice(0, 5).map(v => v.toFixed(3)).join(', ')}...
+                  w1 sample: ${(net.w1 ? net.w1.slice(0, 5).map(v => v.toFixed(3)).join(', ') : '')}...<br>
+                  w2 sample: ${(net.w2 ? net.w2.slice(0, 5).map(v => v.toFixed(3)).join(', ') : '')}...
                 </div>
                 <div class="button-row">
                   <button class="replay-btn" onclick="window.open('${replayUrl}', '_blank')">
