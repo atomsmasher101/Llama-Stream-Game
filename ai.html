@@ -4094,14 +4094,14 @@ const AI = {
     // Bonus for fully clearing completed levels
     const fullClearBonus = (network.levelFullClears || 0) * 5000;
 
-    // Penalize ending runs without campaign progress
-    const noLevelProgressPenalty = network.levelsCompleted === 0 ? 6000 : 0;
+    // Penalize ending runs without campaign progress, but keep early generations viable
+    const noLevelProgressPenalty = network.levelsCompleted === 0 ? 1500 : 0;
     
     // Minimal survival bonus (just to prevent instant death rewards)
     const survivalBonus = Math.min(network.frames * 0.1, 100);
     
-    // Penalty for dying - increased significantly to prevent "die to save points" strategy
-    const deathPenalty = network.deaths * 18000;
+    // Penalty for dying - keep strong pressure, but avoid forcing every early run deeply negative
+    const deathPenalty = network.deaths * 4500;
     
     // Stagnation penalty - penalize for staying in one place
     // Increased to discourage camping
@@ -4109,7 +4109,7 @@ const AI = {
     
     // Timeout penalty - steep penalty for running out of time
     // This strongly discourages the "stand and shoot until time runs out" strategy
-    const timeoutPenalty = (network.timeoutDeaths || 0) * 9000;
+    const timeoutPenalty = (network.timeoutDeaths || 0) * 2500;
     
     // Time penalty - keep pressure to complete quickly
     const timePenalty = Math.max(0, (network.frames - 240) * 1.2);
@@ -4140,8 +4140,9 @@ const AI = {
     
     let rawFitness = levelBonus + fullClearBonus + clearQualityBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty - noLevelProgressPenalty;
 
-    // Hard-gate early strategies: without at least one cleared level, fitness is capped.
-    if (network.levelsCompleted === 0) rawFitness = Math.min(rawFitness, 1500);
+    // Hard-gate early strategies: without at least one cleared level, fitness is capped,
+    // but also floored so one bad death doesn't sink the whole generation.
+    if (network.levelsCompleted === 0) rawFitness = Math.max(-1000, Math.min(rawFitness, 1500));
 
     network.fitness = rawFitness;
     network.score = score;
@@ -4338,13 +4339,13 @@ function respawnAI() {
     currentNetwork.timeoutDeaths = (currentNetwork.timeoutDeaths || 0) + 1;
   }
 
-  // Brutally punish dying before any level clear (prevents walk-forward-and-die exploitation)
+  // Punish dying before any level clear (prevents walk-forward-and-die exploitation)
   if ((currentNetwork.levelsCompleted || 0) === 0) {
-    currentNetwork.fitness -= 12000;
+    currentNetwork.fitness -= 2500;
   }
   
   // Check if fitness is too low - if so, don't waste time respawning
-  const fitnessTooLow = currentNetwork.fitness < 8000;
+  const fitnessTooLow = currentNetwork.fitness < -3000;
   
   if (lives > 0 && currentNetwork.deaths < 3 && !fitnessTooLow) {
     // Try to respawn but track the death
@@ -4354,7 +4355,7 @@ function respawnAI() {
   } else {
     // Network died too many times or fitness too low, move to next
     currentNetwork.alive = false;
-    console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}${fitnessTooLow ? ' (fitness < 8000)' : ''}`);
+    console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}${fitnessTooLow ? ' (fitness < -3000)' : ''}`);
     
     // Submit network if fitness is decent
     if (currentNetwork.fitness > 100 && ((currentNetwork.levelsCompleted || 0) >= 2 || currentNetwork.reachedFlag)) {
