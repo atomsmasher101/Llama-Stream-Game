@@ -240,8 +240,15 @@
         const fastNetworks = networks.filter(n => n.producer === 'fast_trainer');
         const aiNetworks = networks.filter(n => n.producer === 'ai');
         const unknownNetworks = networks.filter(n => !n.producer || n.producer === 'unknown');
-        const avg = arr => arr.length ? Math.floor(arr.reduce((sum, n) => sum + (n.fitness || 0), 0) / arr.length) : 0;
-        const best = arr => arr.length ? Math.floor(Math.max(...arr.map(n => n.fitness || 0))) : 0;
+        function avg(arr) {
+          if (!arr.length) return 0;
+          var total = arr.reduce(function(sum, n) { return sum + (n.fitness || 0); }, 0);
+          return Math.floor(total / arr.length);
+        }
+        function best(arr) {
+          if (!arr.length) return 0;
+          return Math.floor(Math.max.apply(null, arr.map(function(n) { return n.fitness || 0; })));
+        }
 
         document.getElementById('fastCount').textContent = fastNetworks.length;
         document.getElementById('fastBest').textContent = best(fastNetworks);
