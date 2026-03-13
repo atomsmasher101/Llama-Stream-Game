@@ -455,19 +455,19 @@ function simulateNetwork(network, levelNum = 1) {
 
   // All rewards that the agent "earned" during the run.
   // Progress is relative to start so camping = zero.
-  const progressReward = (maxX - startX) * 5;
+  const progressReward = (maxX - startX) * 2.5;
   const enemyBonus     = enemiesKilled * 450;
   const coinBonus      = coinsCollected * 350;
   const scoreBonus     = score;
 
   const enemyClearRatio = totalEnemies > 0 ? (enemiesKilled / totalEnemies) : 1;
   const coinClearRatio = totalCoins > 0 ? (coinsCollected / totalCoins) : 1;
-  const clearQualityBonus = (enemyClearRatio + coinClearRatio) * 2200;
+  const clearQualityBonus = reachedFlag ? (enemyClearRatio + coinClearRatio) * 2400 : (enemyClearRatio + coinClearRatio) * 300;
   const fullClear = reachedFlag && enemiesKilled === totalEnemies && coinsCollected === totalCoins;
 
   // Survival multiplier: death deflates everything earned in the run to 20%.
   // This makes it impossible to "bank" kills and die profitably.
-  const survivalMult = alive ? 1.0 : 0.15;
+  const survivalMult = alive ? 1.0 : 0.05;
 
   const runReward = (progressReward + enemyBonus + coinBonus + scoreBonus) * survivalMult;
 
@@ -475,17 +475,23 @@ function simulateNetwork(network, levelNum = 1) {
   const flagBonus       = reachedFlag ? 7000 : 0;
   const fullClearBonus  = fullClear ? 10000 : 0;
   const efficiencyBonus = reachedFlag ? Math.max(0, (MAX_FRAMES - frames) * 0.8) : 0;
-  const incompleteClearPenalty = reachedFlag && !fullClear ? 2500 : 0;
+  const incompleteClearPenalty = reachedFlag && !fullClear ? 5000 : 0;
 
   // Stagnation: every non-advancing frame costs points regardless of survival.
   const stagnationPenalty = totalStagnantFrames * 8;
 
   // Mild time pressure.
-  const timePenalty = frames * 0.2;
+  const timePenalty = frames * 0.3;
 
   // Negative fitness preserved for gradient — no Math.max(0,...) clamping.
-  const fitness = runReward + clearQualityBonus + flagBonus + fullClearBonus + efficiencyBonus
-                - stagnationPenalty - timePenalty - incompleteClearPenalty;
+  const earlyDeathPenalty = !alive && frames < 240 ? 12000 : 0;
+  const deathPenalty = !alive ? 8000 : 0;
+
+  let fitness = runReward + clearQualityBonus + flagBonus + fullClearBonus + efficiencyBonus
+              - stagnationPenalty - timePenalty - incompleteClearPenalty - deathPenalty - earlyDeathPenalty;
+
+  // No-flag runs are strictly capped to avoid rewarding simple forward-then-die behavior.
+  if (!reachedFlag) fitness = Math.min(fitness, 2500);
 
   return { fitness, score, coinsCollected, enemiesKilled, maxX, frames, alive, reachedFlag, fullClear };
 }
@@ -499,7 +505,7 @@ function evaluateNetwork(network) {
   const runs = [1, 2, 1, 2, 1].map(levelNum => simulateNetwork(network, levelNum));
   const fullClears = runs.filter(r => r.fullClear).length;
   const levelsCleared = runs.filter(r => r.reachedFlag).length;
-  const campaignBonus = (levelsCleared * 12000) + (fullClears * 9000);
+  const campaignBonus = (levelsCleared * 16000) + (fullClears * 12000);
 
   // Weighted campaign score across 5 simulated stages.
   const weightedFitness =

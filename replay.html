@@ -3538,7 +3538,7 @@ const AI = {
   generation: 0,
   active: false,
   pausedForAI: false,
-  inputSize: 50,
+  inputSize: 52,
   hiddenSize: 32,
   outputSize: 6,
   serverUrl: (new URLSearchParams(window.location.search).get('server')) || 
@@ -3881,7 +3881,7 @@ const AI = {
     const outputs = network.forward(inputs);
     
     // Add some noise for exploration
-    const noise = 0.1;
+    const noise = AI.replayMode ? 0 : 0.1;
     
     return {
       left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
