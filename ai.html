@@ -3554,16 +3554,32 @@ const AI = {
   online: false,
   submitReady: true,
   
-  init(populationSize = 40) {
+  async init(populationSize = 30) {
     this.population = [];
-    for (let i = 0; i < populationSize; i++) {
+    // Start with some random networks (will be replaced by server networks if available)
+    const initialRandomCount = 10;
+    for (let i = 0; i < initialRandomCount; i++) {
       this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
     }
     this.generation = 0;
     this.active = true;
     this.hiddenSize = 48;
-    // Try to connect to server
-    this.checkServer();
+    
+    // Try to connect to server and fetch networks
+    console.log('init: checking server for networks...');
+    const connected = await this.checkServer();
+    console.log('init: server check complete, connected:', connected);
+    
+    // If we have fewer networks than desired, add more random networks
+    while (this.population.length < populationSize) {
+      this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
+    }
+    
+    // Sort by fitness (best first)
+    this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+    
+    console.log(`init: final population size: ${this.population.length}, server networks: ${this.population.filter(n => n.fromServer).length}`);
+    return connected;
   },
   
   async checkServer() {
@@ -3579,7 +3595,7 @@ const AI = {
         this.online = true;
         this.currentUrl = this.serverUrl;
         console.log('checkServer: connected to AI server!');
-        this.fetchServerNetworks();
+        await this.fetchServerNetworks();
         return true;
       } else {
         console.log('checkServer: health check failed, status:', resp.status);
@@ -3639,7 +3655,7 @@ const AI = {
         if (data.networks && data.networks.length > 0) {
           console.log(`fetchServerNetworks: fetching ${data.networks.length} networks from server`);
           
-          // Add server networks to population (replacing worst)
+          // Add server networks to population
           for (const netData of data.networks) {
             const net = new NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
             net.w1.set(netData.w1);
@@ -3649,14 +3665,20 @@ const AI = {
             net.fitness = netData.fitness;
             net.fromServer = true;
             
-            // Replace worst networks
-            this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
-            const worstIdx = this.population.length - 1;
-            if (!this.population[worstIdx] || (this.population[worstIdx].fitness || 0) < netData.fitness) {
-              this.population[worstIdx] = net;
-            }
+            this.population.push(net);
+            console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}`);
+          }
+          
+          // Sort population by fitness (descending) so best networks are first
+          this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+          
+          // Keep only the best networks (limit population size)
+          if (this.population.length > 30) {
+            this.population = this.population.slice(0, 30);
+            console.log(`Trimmed population to ${this.population.length} networks`);
           }
           console.log('fetchServerNetworks: server networks integrated!');
+          console.log(`Population now has ${this.population.filter(n => n.fromServer).length} server networks`);
         } else {
           console.log('fetchServerNetworks: no networks found in response');
         }
@@ -4043,11 +4065,30 @@ let currentNetwork = null;
 let aiFrames = 0;
 let aiScore = 0;
 
-function startAI() {
+async function startAI() {
   console.log('Starting AI for all 5 levels...');
   console.log('Initializing AI population...');
-  AI.init(30);
+  
+  // Initialize AI and wait for server check to complete
+  const serverConnected = await AI.init(30);
   AI.active = true;
+  
+  console.log(`Population size: ${AI.population.length}`);
+  const serverNetworks = AI.population.filter(n => n.fromServer).length;
+  console.log(`Server networks in population: ${serverNetworks}`);
+  
+  // Show top 5 networks
+  console.log('Top 5 networks:');
+  for (let i = 0; i < Math.min(5, AI.population.length); i++) {
+    const net = AI.population[i];
+    console.log(`  ${i + 1}. Fitness: ${net.fitness?.toFixed(0) || 'undefined'}, fromServer: ${net.fromServer || false}`);
+  }
+  
+  if (serverConnected) {
+    console.log('Server connected, networks downloaded or error occurred');
+  } else {
+    console.log('Server not available, running in offline mode');
+  }
   
   console.log('Calling startGameForAI...');
   startGameForAI();
@@ -4055,9 +4096,6 @@ function startAI() {
 }
 
 function startGameForAI() {
-  // Try to reconnect to server before starting
-  AI.reconnect();
-  
   // Start from level 1
   level = 1;
   score = 0; lives = 3;
@@ -4075,7 +4113,14 @@ function startGameForAI() {
   loadLevel();
   
   // Select network
-  currentNetwork = AI.population[Math.floor(Math.random() * Math.min(5, AI.population.length))];
+  const populationSize = AI.population.length;
+  const selectionSize = Math.min(5, populationSize);
+  const randomIdx = Math.floor(Math.random() * selectionSize);
+  currentNetwork = AI.population[randomIdx];
+  
+  console.log(`Starting game with network ${randomIdx + 1}/${populationSize} (selected from first ${selectionSize})`);
+  console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}`);
+  
   AI.resetForNewRun(currentNetwork);
   
   state = 'playing';
@@ -4185,17 +4230,20 @@ function respawnAI() {
     currentNetwork.timeoutDeaths = (currentNetwork.timeoutDeaths || 0) + 1;
   }
   
-  if (lives > 0 && currentNetwork.deaths < 3) {
+  // Check if fitness is too low - if so, don't waste time respawning
+  const fitnessTooLow = currentNetwork.fitness < 5000;
+  
+  if (lives > 0 && currentNetwork.deaths < 3 && !fitnessTooLow) {
     // Try to respawn but track the death
     respawn();
     currentNetwork.frames = 0;
     aiFrames = 0;
   } else {
-    // Network died too many times, move to next
+    // Network died too many times or fitness too low, move to next
     currentNetwork.alive = false;
-    console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}`);
+    console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}${fitnessTooLow ? ' (fitness < 5000)' : ''}`);
     
-    // Submit network
+    // Submit network if fitness is decent
     if (currentNetwork.fitness > 100) {
       console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
       AI.submitNetwork(currentNetwork.clone());
