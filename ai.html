@@ -3683,8 +3683,8 @@ const AI = {
               net.fitness = netData.fitness;
               net.fromServer = true;
               net.id = netData.id;
-              net.producer = netData.producer || "unknown";
               net.actionProfile = netData.actionProfile || "full6";
+              net.producer = netData.producer || (net.actionProfile === 'movement3' ? 'fast_trainer' : 'ai');
               net.trainingStats = netData.trainingStats || null;
 
               this.population.push(net);

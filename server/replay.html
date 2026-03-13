@@ -3624,8 +3624,8 @@ const AI = {
       this.replayNetwork.b2.set(networkData.b2);
       this.replayNetwork.fitness = networkData.fitness;
       this.replayNetwork.id = networkData.id;
-      this.replayNetwork.producer = networkData.producer || "unknown";
       this.replayNetwork.actionProfile = networkData.actionProfile || "full6";
+      this.replayNetwork.producer = networkData.producer || (this.replayNetwork.actionProfile === "movement3" ? "fast_trainer" : "ai");
       this.replayNetwork.trainingStats = networkData.trainingStats || null;
       console.log(`Replay metadata: producer=${this.replayNetwork.producer}, actionProfile=${this.replayNetwork.actionProfile}, stats=${JSON.stringify(this.replayNetwork.trainingStats)}`);
       console.log('Replay network loaded successfully!');
