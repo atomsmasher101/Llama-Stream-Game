@@ -3638,7 +3638,7 @@ const AI = {
       return;
     }
     
-    const url = this.currentUrl + '/api/networks?limit=10';
+    const url = this.currentUrl + '/api/networks?limit=20';
     console.log('fetchServerNetworks: attempting to fetch from', url);
     
     try {
@@ -3664,6 +3664,24 @@ const AI = {
           throw parseError;
         }
         
+
+        // Pull explicit pending fast_trainer evaluations so real-game scoring keeps up.
+        try {
+          const pendingResp = await fetch(this.currentUrl + '/api/evaluations/pending?limit=10', { cache: 'no-store' });
+          if (pendingResp.ok) {
+            const pendingData = await pendingResp.json();
+            if (Array.isArray(pendingData.networks) && pendingData.networks.length > 0) {
+              const knownIds = new Set((data.networks || []).map(n => n.id));
+              for (const n of pendingData.networks) {
+                if (!knownIds.has(n.id)) data.networks.push(n);
+              }
+              console.log(`fetchServerNetworks: merged ${pendingData.networks.length} pending eval candidates`);
+            }
+          }
+        } catch (e) {
+          console.log('fetchServerNetworks: pending eval fetch failed:', e.message);
+        }
+
         if (data.networks && data.networks.length > 0) {
           console.log(`fetchServerNetworks: fetching ${data.networks.length} networks from server`);
           
@@ -3686,6 +3704,8 @@ const AI = {
               net.actionProfile = netData.actionProfile || "full6";
               net.producer = netData.producer || (net.actionProfile === 'movement3' ? 'fast_trainer' : 'ai');
               net.trainingStats = netData.trainingStats || null;
+              net.aiScore = typeof netData.aiScore === 'number' ? netData.aiScore : null;
+              net.aiEvaluations = netData.aiEvaluations || 0;
 
               this.population.push(net);
               console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}, id: ${netData.id?.substring(0,8)}`);
@@ -3718,6 +3738,32 @@ const AI = {
     }
   },
   
+  async submitEvaluation(network) {
+    if (!network?.id || network?.producer !== 'fast_trainer') return;
+
+    const url = this.currentUrl || this.serverUrl || 'http://localhost:3000';
+    try {
+      const resp = await fetch(`${url}/api/networks/${network.id}/score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          score: network.fitness || 0,
+          scorer: 'ai.html',
+          levelsCompleted: network.levelsCompleted || 0,
+          levelFullClears: network.levelFullClears || 0
+        })
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        network.aiEvaluations = data.aiEvaluations || (network.aiEvaluations || 0) + 1;
+        console.log(`submitEvaluation: scored fast_trainer network ${network.id.substring(0, 8)} with ${Math.floor(network.fitness || 0)} (evals: ${network.aiEvaluations})`);
+      }
+    } catch (e) {
+      console.log('submitEvaluation: failed', e.message);
+    }
+  },
+
   async submitNetwork(network) {
     // Always try to submit regardless of online status
     const url = this.currentUrl || this.serverUrl || 'http://localhost:3000';
@@ -4201,13 +4247,24 @@ function startGameForAI() {
   
   loadLevel();
   
-  // Select network
+  // Select network: prioritize fast_trainer candidates that still need real-game scoring
   const populationSize = AI.population.length;
-  const selectionSize = Math.min(5, populationSize);
-  const randomIdx = Math.floor(Math.random() * selectionSize);
-  currentNetwork = AI.population[randomIdx];
+  const pendingEval = AI.population
+    .filter(n => n.fromServer && n.producer === 'fast_trainer')
+    .sort((a, b) => (a.aiEvaluations || 0) - (b.aiEvaluations || 0) || (b.fitness || 0) - (a.fitness || 0));
+
+  if (pendingEval.length > 0) {
+    const selectionSize = Math.min(3, pendingEval.length);
+    const randomIdx = Math.floor(Math.random() * selectionSize);
+    currentNetwork = pendingEval[randomIdx];
+    console.log(`Starting game with pending fast_trainer candidate ${randomIdx + 1}/${pendingEval.length}`);
+  } else {
+    const selectionSize = Math.min(5, populationSize);
+    const randomIdx = Math.floor(Math.random() * selectionSize);
+    currentNetwork = AI.population[randomIdx];
+    console.log(`Starting game with network ${randomIdx + 1}/${populationSize} (selected from first ${selectionSize})`);
+  }
   
-  console.log(`Starting game with network ${randomIdx + 1}/${populationSize} (selected from first ${selectionSize})`);
   console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}, producer: ${currentNetwork.producer || "unknown"}, actionProfile: ${currentNetwork.actionProfile || "full6"}`);
   
   AI.resetForNewRun(currentNetwork);
@@ -4313,6 +4370,7 @@ function updateAI() {
       if (currentNetwork.fitness > 500) {
         AI.submitNetwork(currentNetwork);
       }
+      AI.submitEvaluation(currentNetwork);
       
       // Wait briefly then start new run
       setTimeout(() => {
@@ -4362,6 +4420,7 @@ function respawnAI() {
       console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
       AI.submitNetwork(currentNetwork.clone());
     }
+    AI.submitEvaluation(currentNetwork);
     
     startGameForAI();
   }
@@ -4413,6 +4472,7 @@ update = function() {
           console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
           AI.submitNetwork(currentNetwork.clone());
         }
+        if (currentNetwork) AI.submitEvaluation(currentNetwork);
       }
       AI.restartTimer--;
       if (AI.restartTimer <= 0) {
