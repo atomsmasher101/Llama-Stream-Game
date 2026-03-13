@@ -1,0 +1,9 @@
+tunnel: your-tunnel-name
+credentials-file: C:\Users\littl\.cloudflared\credentials.json
+
+ingress:
+  - hostname: llamagame-ai-server.wascomb.com
+    service: http://localhost:3000
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404

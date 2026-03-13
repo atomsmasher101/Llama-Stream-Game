@@ -3427,11 +3427,17 @@ function loop(timestamp) {
   // • 60 Hz display  → 1 step/frame  → exactly 60 physics ticks/sec  ✓
   // • 120 Hz display → ~1 step every 2 frames → still 60 ticks/sec   ✓
   // • Lag spike      → 1 catch-up step maximum, then accumulator drains ✓
-  _accumulator += delta;
-
+  
+  // In replay mode, apply speed multiplier to accumulator
+  // This controls how fast/slow the simulation runs
+  const speedMultiplier = (AI.replayMode && AI.replaySpeed) ? AI.replaySpeed : 1.0;
+  _accumulator += delta * speedMultiplier;
+  
   if (_accumulator >= FIXED_DT) {
-    update();                      // exactly one physics tick per render frame
+    // Run exactly one physics tick per render frame (for consistent physics)
+    update();
     _accumulator -= FIXED_DT;
+    
     // Drain any leftover debt so a slow frame can't cascade into a burst
     // on the next frame.  Half a tick of carry-over is enough to stay in sync.
     if (_accumulator > FIXED_DT) _accumulator = FIXED_DT * 0.5;
@@ -3486,7 +3492,6 @@ class NeuralNetwork {
     nn.levelsCompleted = this.levelsCompleted || 0;
     nn.enemiesKilled = this.enemiesKilled || 0;
     nn.isExplorer = this.isExplorer || false;
-    nn.id = this.id || null; // Preserve original ID to prevent duplicate submissions
     return nn;
   }
   
@@ -3555,32 +3560,82 @@ const AI = {
   online: false,
   submitReady: true,
   
-  async init(populationSize = 30) {
+  init(populationSize = 40) {
     this.population = [];
-    // Start with some random networks (will be replaced by server networks if available)
-    const initialRandomCount = 10;
-    for (let i = 0; i < initialRandomCount; i++) {
+    for (let i = 0; i < populationSize; i++) {
       this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
     }
     this.generation = 0;
     this.active = true;
     this.hiddenSize = 48;
+    this.replayMode = false;
+    this.replayNetwork = null;
     
-    // Try to connect to server and fetch networks
-    console.log('init: checking server for networks...');
-    const connected = await this.checkServer();
-    console.log('init: server check complete, connected:', connected);
+    // Check for replay mode
+    const urlParams = new URLSearchParams(window.location.search);
+    const networkId = urlParams.get('networkId');
+    const speedParam = urlParams.get('speed');
     
-    // If we have fewer networks than desired, add more random networks
-    while (this.population.length < populationSize) {
-      this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
+    // Set replay speed (default 1.0)
+    this.replaySpeed = speedParam ? parseFloat(speedParam) : 1.0;
+    console.log(`Replay speed: ${this.replaySpeed}x`);
+    
+    if (networkId) {
+      // Fetch network data from server
+      this.replayMode = true;
+      this.loadNetworkForReplay(networkId);
+    }
+  },
+  
+  async loadNetworkForReplay(networkId) {
+    try {
+      console.log('Replay mode: Fetching network', networkId.substring(0, 8));
+      
+      // Fetch the specific network from server
+      const resp = await fetch(window.location.origin + '/api/networks?limit=100');
+      const data = await resp.json();
+      
+      // Find the network by ID
+      const networkData = data.networks.find(n => n.id === networkId);
+      
+      if (!networkData) {
+        console.error('Network not found:', networkId);
+        return;
+      }
+      
+      console.log('Replay mode: Loading network', networkData.id?.substring(0, 8));
+      this.replayNetwork = new NeuralNetwork(this.inputSize, networkData.hiddenSize || 48, this.outputSize);
+      
+      if (this.replayNetwork.w1.length !== networkData.w1.length || 
+          this.replayNetwork.w2.length !== networkData.w2.length ||
+          this.replayNetwork.b1.length !== networkData.b1.length ||
+          this.replayNetwork.b2.length !== networkData.b2.length) {
+        console.error('Network size mismatch, cannot replay:', 
+          `w1(${this.replayNetwork.w1.length} vs ${networkData.w1.length}), ` +
+          `w2(${this.replayNetwork.w2.length} vs ${networkData.w2.length}), ` +
+          `b1(${this.replayNetwork.b1.length} vs ${networkData.b1.length}), ` +
+          `b2(${this.replayNetwork.b2.length} vs ${networkData.b2.length})`);
+        return;
+      }
+      
+      this.replayNetwork.w1.set(networkData.w1);
+      this.replayNetwork.w2.set(networkData.w2);
+      this.replayNetwork.b1.set(networkData.b1);
+      this.replayNetwork.b2.set(networkData.b2);
+      this.replayNetwork.fitness = networkData.fitness;
+      this.replayNetwork.id = networkData.id;
+      console.log('Replay network loaded successfully!');
+      
+      // Now that the network is loaded, start the game
+      console.log('Calling startGameForAI (replay network loaded)...');
+      startGameForAI();
+      console.log('startAI complete. State:', state, 'Level:', level, 'lvlData:', !!lvlData);
+    } catch (e) {
+      console.error('Failed to load replay network:', e.message);
     }
     
-    // Sort by fitness (best first)
-    this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
-    
-    console.log(`init: final population size: ${this.population.length}, server networks: ${this.population.filter(n => n.fromServer).length}`);
-    return connected;
+    // Try to connect to server
+    this.checkServer();
   },
   
   async checkServer() {
@@ -3596,7 +3651,7 @@ const AI = {
         this.online = true;
         this.currentUrl = this.serverUrl;
         console.log('checkServer: connected to AI server!');
-        await this.fetchServerNetworks();
+        this.fetchServerNetworks();
         return true;
       } else {
         console.log('checkServer: health check failed, status:', resp.status);
@@ -3656,18 +3711,17 @@ const AI = {
         if (data.networks && data.networks.length > 0) {
           console.log(`fetchServerNetworks: fetching ${data.networks.length} networks from server`);
           
-          // Add server networks to population
+          // Add server networks to population (replacing worst)
           for (const netData of data.networks) {
             try {
-              const hiddenSize = netData.hiddenSize || 48;
-              const net = new NeuralNetwork(this.inputSize, hiddenSize, this.outputSize);
+              const net = new NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
               
               // Check if sizes match before setting
-              if (net.w1.length !== netData.w1.length || 
-                  net.w2.length !== netData.w2.length ||
-                  net.b1.length !== netData.b1.length ||
-                  net.b2.length !== netData.b2.length) {
-                console.warn(`Network size mismatch, skipping: w1(${net.w1.length} vs ${netData.w1.length})`);
+              if (net.w1.length !== netData.w1?.length || 
+                  net.w2.length !== netData.w2?.length ||
+                  net.b1.length !== netData.b1?.length ||
+                  net.b2.length !== netData.b2?.length) {
+                console.warn(`Network size mismatch, skipping: w1(${net.w1.length} vs ${netData.w1?.length})`);
                 continue;
               }
               
@@ -3679,23 +3733,17 @@ const AI = {
               net.fromServer = true;
               net.id = netData.id;
               
-              this.population.push(net);
-              console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}, id: ${netData.id?.substring(0,8)}`);
+              // Replace worst networks
+              this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+              const worstIdx = this.population.length - 1;
+              if (!this.population[worstIdx] || (this.population[worstIdx].fitness || 0) < netData.fitness) {
+                this.population[worstIdx] = net;
+              }
             } catch (e) {
               console.warn(`Failed to add network: ${e.message}`);
             }
           }
-          
-          // Sort population by fitness (descending) so best networks are first
-          this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
-          
-          // Keep only the best networks (limit population size)
-          if (this.population.length > 30) {
-            this.population = this.population.slice(0, 30);
-            console.log(`Trimmed population to ${this.population.length} networks`);
-          }
           console.log('fetchServerNetworks: server networks integrated!');
-          console.log(`Population now has ${this.population.filter(n => n.fromServer).length} server networks`);
         } else {
           console.log('fetchServerNetworks: no networks found in response');
         }
@@ -3731,7 +3779,6 @@ const AI = {
     try {
       const requestBody = JSON.stringify({
         networks: [{
-          id: network.id || undefined, // Include original ID if present
           fitness: network.fitness,
           hiddenSize: network.hiddenSize || 48,
           w1: Array.from(network.w1),
@@ -4091,29 +4138,23 @@ let currentNetwork = null;
 let aiFrames = 0;
 let aiScore = 0;
 
-async function startAI() {
+function startAI() {
   console.log('Starting AI for all 5 levels...');
   console.log('Initializing AI population...');
-  
-  // Initialize AI and wait for server check to complete
-  const serverConnected = await AI.init(30);
+  AI.init(30);
   AI.active = true;
   
-  console.log(`Population size: ${AI.population.length}`);
-  const serverNetworks = AI.population.filter(n => n.fromServer).length;
-  console.log(`Server networks in population: ${serverNetworks}`);
-  
-  // Show top 5 networks
-  console.log('Top 5 networks:');
-  for (let i = 0; i < Math.min(5, AI.population.length); i++) {
-    const net = AI.population[i];
-    console.log(`  ${i + 1}. Fitness: ${net.fitness?.toFixed(0) || 'undefined'}, fromServer: ${net.fromServer || false}`);
-  }
-  
-  if (serverConnected) {
-    console.log('Server connected, networks downloaded or error occurred');
-  } else {
-    console.log('Server not available, running in offline mode');
+  if (AI.replayMode) {
+    if (AI.replayNetwork) {
+        console.log('Starting REPLAY MODE for network:', AI.replayNetwork.id?.substring(0, 8));
+        // In replay mode, we use the replay network for all levels
+        currentNetwork = AI.replayNetwork;
+        AI.resetForNewRun(currentNetwork);
+    } else {
+        console.log('Replay mode requested but network not yet loaded. Waiting...');
+        // Don't start game loop yet, loadNetworkForReplay will trigger it
+        return;
+    }
   }
   
   console.log('Calling startGameForAI...');
@@ -4122,6 +4163,9 @@ async function startAI() {
 }
 
 function startGameForAI() {
+  // Try to reconnect to server before starting
+  AI.reconnect();
+  
   // Start from level 1
   level = 1;
   score = 0; lives = 3;
@@ -4139,14 +4183,12 @@ function startGameForAI() {
   loadLevel();
   
   // Select network
-  const populationSize = AI.population.length;
-  const selectionSize = Math.min(5, populationSize);
-  const randomIdx = Math.floor(Math.random() * selectionSize);
-  currentNetwork = AI.population[randomIdx];
-  
-  console.log(`Starting game with network ${randomIdx + 1}/${populationSize} (selected from first ${selectionSize})`);
-  console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}`);
-  
+  if (AI.replayMode && AI.replayNetwork) {
+    currentNetwork = AI.replayNetwork;
+    console.log('Replay mode: Using replay network');
+  } else {
+    currentNetwork = AI.population[Math.floor(Math.random() * Math.min(5, AI.population.length))];
+  }
   AI.resetForNewRun(currentNetwork);
   
   state = 'playing';
@@ -4226,14 +4268,18 @@ function updateAI() {
       currentNetwork.fitness += 15000;
       console.log(`🏆 GAME WON! Final score: ${score}`);
       
-      // Submit network
-      if (currentNetwork.fitness > 500) {
+      // Only submit in training mode
+      if (!AI.replayMode && currentNetwork.fitness > 500) {
         AI.submitNetwork(currentNetwork);
       }
       
       // Wait briefly then start new run
       setTimeout(() => {
-        console.log('Starting new training run...');
+        if (AI.replayMode) {
+          console.log('Replay complete! Restarting replay...');
+        } else {
+          console.log('Starting new training run...');
+        }
         startGameForAI();
       }, 2000);
     } else {
@@ -4269,8 +4315,8 @@ function respawnAI() {
     currentNetwork.alive = false;
     console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}${fitnessTooLow ? ' (fitness < 5000)' : ''}`);
     
-    // Submit network if fitness is decent
-    if (currentNetwork.fitness > 100) {
+    // Only submit in training mode
+    if (!AI.replayMode && currentNetwork.fitness > 100) {
       console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
       AI.submitNetwork(currentNetwork.clone());
     }
@@ -4282,11 +4328,14 @@ function respawnAI() {
 function showAIDebug() {
   const hud = document.getElementById('hud');
   const serverStatus = AI.online ? '🟢 ONLINE' : '🔴 OFFLINE';
-  const networkInfo = `${AI.population.indexOf(currentNetwork) + 1}/${AI.population.length}`;
+  const modeStatus = AI.replayMode ? 'REPLAY' : 'TRAINING';
+  const networkInfo = AI.replayMode 
+    ? `REPLAY: ${AI.replayNetwork?.id?.substring(0, 8) || 'N/A'}`
+    : `${AI.population.indexOf(currentNetwork) + 1}/${AI.population.length}`;
   const explorerStatus = currentNetwork.isExplorer ? '🔍 EXPLORER' : '⚙️  EXPLOITER';
   
   hud.innerHTML = `
-    <div>MODE: TRAINING</div>
+    <div>MODE: ${modeStatus}</div>
     <div>GEN: ${AI.generation}</div>
     <div>NETWORK: ${networkInfo} ${explorerStatus}</div>
     <div>LEVEL: ${currentNetwork.levelsCompleted}/5</div>
@@ -4295,7 +4344,7 @@ function showAIDebug() {
     <div>SCORE: ${score}</div>
     <div>FRAMES: ${aiFrames}</div>
   `;
-  hud.style.color = currentNetwork.isExplorer ? '#ffaa00' : '#0f0';
+  hud.style.color = currentNetwork.isExplorer ? '#ffaa00' : (AI.replayMode ? '#f5c542' : '#0f0');
 }
 
 // Override update to include AI for all levels
@@ -4371,18 +4420,18 @@ setTimeout(() => {
   }
 })();
 
-// Start game loop only after AI is initialized
-(async function() {
-  try {
-    await startAI();
-    // Now start the game loop
-    requestAnimationFrame(function(t) {
-      loop(t);
-    });
-  } catch(e) {
-    console.error('Error starting AI:', e);
+requestAnimationFrame(function(t) {
+  loop(t);
+});
+
+try {
+  if (!AI.replayMode) {
+    startAI();
   }
-})();
+  // If replayMode is true, startAI will be called by loadNetworkForReplay after network loads
+} catch(e) {
+  console.error('Error starting AI:', e);
+}
 </script>
 </body>
 </html>

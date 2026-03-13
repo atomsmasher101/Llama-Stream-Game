@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Llama AI - Headless Trainer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0a1a;
+      color: #0f0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    h1 {
+      text-align: center;
+      color: #f5c542;
+      margin-bottom: 20px;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      padding: 15px 30px;
+      font-size: 1.1em;
+      font-family: inherit;
+      background: #3C3B6E;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    
+    .btn:hover { background: #5a5aaa; }
+    .btn:disabled { background: #666; cursor: not-allowed; }
+    .btn.start { background: #27ae60; }
+    .btn.start:hover { background: #2ecc71; }
+    .btn.stop { background: #e74c3c; }
+    .btn.stop:hover { background: #c0392b; }
+    
+    .status {
+      text-align: center;
+      padding: 20px;
+      margin-bottom: 20px;
+      background: #1a1a2e;
+      border-radius: 8px;
+      border: 2px solid #333;
+    }
+    
+    .status.online { border-color: #0f0; }
+    .status.offline { border-color: #f00; }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    
+    .stat-box {
+      background: #16213e;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+      border: 1px solid #3C3B6E;
+    }
+    
+    .stat-box .value {
+      font-size: 2em;
+      color: #f5c542;
+    }
+    
+    .stat-box .label {
+      color: #888;
+      font-size: 0.9em;
+    }
+    
+    .log {
+      background: #1a1a2e;
+      padding: 20px;
+      border-radius: 8px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.9em;
+      line-height: 1.5;
+    }
+    
+    .log .info { color: #0f0; }
+    .log .warn { color: #f5c542; }
+    .log .error { color: #e74c3c; }
+    .log .success { color: #2ecc71; }
+  </style>
+</head>
+<body>
+  <h1>🦙 Llama AI - Headless Trainer</h1>
+  
+  <div id="status" class="status">
+    <div class="info">Connecting to server...</div>
+  </div>
+  
+  <div class="controls">
+    <button class="btn start" id="startBtn" onclick="startTraining()">▶ Start Training</button>
+    <button class="btn stop" id="stopBtn" onclick="stopTraining()" disabled>⏹ Stop</button>
+    <button class="btn" onclick="testServer()">🔄 Refresh Stats</button>
+  </div>
+  
+  <div class="stats">
+    <div class="stat-box">
+      <div class="value" id="generation">0</div>
+      <div class="label">Generation</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="networksGenerated">0</div>
+      <div class="label">Networks Generated</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="serverNetworks">0</div>
+      <div class="label">Server Networks</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="bestFitness">0</div>
+      <div class="label">Best Fitness</div>
+    </div>
+  </div>
+  
+  <div class="log" id="log"></div>
+
+  <script>
+    // Neural Network implementation
+    class NeuralNetwork {
+      constructor(inputSize, hiddenSize, outputSize) {
+        this.inputSize = inputSize;
+        this.hiddenSize = hiddenSize;
+        this.outputSize = outputSize;
+        
+        this.w1 = new Float32Array(inputSize * hiddenSize);
+        this.w2 = new Float32Array(hiddenSize * outputSize);
+        this.b1 = new Float32Array(hiddenSize);
+        this.b2 = new Float32Array(outputSize);
+        
+        this.randomize();
+      }
+      
+      randomize() {
+        for (let i = 0; i < this.w1.length; i++) this.w1[i] = (Math.random() * 2 - 1) * 0.5;
+        for (let i = 0; i < this.w2.length; i++) this.w2[i] = (Math.random() * 2 - 1) * 0.5;
+        for (let i = 0; i < this.b1.length; i++) this.b1[i] = (Math.random() * 2 - 1) * 0.2;
+        for (let i = 0; i < this.b2.length; i++) this.b2[i] = (Math.random() * 2 - 1) * 0.2;
+      }
+      
+      clone() {
+        const nn = new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize);
+        nn.w1.set(this.w1);
+        nn.w2.set(this.w2);
+        nn.b1.set(this.b1);
+        nn.b2.set(this.b2);
+        nn.fitness = this.fitness || 0;
+        nn.id = this.id || null;
+        return nn;
+      }
+      
+      mutate(rate, highVariance = false) {
+        const varianceMultiplier = highVariance ? 3.0 : 1.0;
+        const mutateVal = (v) => {
+          if (Math.random() < rate) {
+            if (highVariance && Math.random() < 0.2) {
+              return (Math.random() * 2 - 1) * 0.5;
+            }
+            return v + (Math.random() * 2 - 1) * 0.3 * varianceMultiplier;
+          }
+          return v;
+        };
+        for (let i = 0; i < this.w1.length; i++) this.w1[i] = mutateVal(this.w1[i]);
+        for (let i = 0; i < this.w2.length; i++) this.w2[i] = mutateVal(this.w2[i]);
+        for (let i = 0; i < this.b1.length; i++) this.b1[i] = mutateVal(this.b1[i]);
+        for (let i = 0; i < this.b2.length; i++) this.b2[i] = mutateVal(this.b2[i]);
+      }
+    }
+    
+    // Configuration
+    const CONFIG = {
+      populationSize: 100,
+      inputSize: 52,
+      hiddenSize: 48,
+      outputSize: 6,
+      eliteCount: 5,
+      mutationRate: 0.1,
+      batchSize: 10, // Networks to submit per batch
+      batchInterval: 1000, // ms between batches
+      evolveInterval: 5000, // ms between evolutions
+    };
+    
+    // State
+    let population = [];
+    let generation = 0;
+    let networksGenerated = 0;
+    let serverUrl = window.location.origin;
+    let isRunning = false;
+    let trainingInterval = null;
+    let evolveInterval = null;
+    
+    // DOM elements
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    
+    // Logging
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = type;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.insertBefore(div, logEl.firstChild);
+      if (logEl.children.length > 100) logEl.removeChild(logEl.lastChild);
+    }
+    
+    // Update UI
+    function updateUI(stats) {
+      document.getElementById('generation').textContent = generation;
+      document.getElementById('networksGenerated').textContent = networksGenerated;
+      document.getElementById('serverNetworks').textContent = stats?.totalNetworks || 0;
+      document.getElementById('bestFitness').textContent = Math.floor(stats?.bestFitness || 0);
+    }
+    
+    // Initialize population
+    function initPopulation() {
+      population = [];
+      for (let i = 0; i < CONFIG.populationSize; i++) {
+        const nn = new NeuralNetwork(CONFIG.inputSize, CONFIG.hiddenSize, CONFIG.outputSize);
+        nn.fitness = Math.random() * 1000; // Random initial fitness
+        population.push(nn);
+      }
+      generation = 0;
+      networksGenerated = 0;
+      log('Population initialized', 'info');
+    }
+    
+    // Evolve population
+    function evolve() {
+      // Sort by fitness
+      population.sort((a, b) => b.fitness - a.fitness);
+      
+      const best = population[0];
+      log(`Gen ${generation}: Best fitness = ${best.fitness.toFixed(0)}`, 'success');
+      
+      // Create new population
+      const newPop = [];
+      
+      // Elitism - keep top networks
+      for (let i = 0; i < CONFIG.eliteCount; i++) {
+        newPop.push(population[i].clone());
+      }
+      
+      // Fill rest with mutated children
+      while (newPop.length < CONFIG.populationSize) {
+        // Tournament selection
+        const parentA = population[Math.floor(Math.random() * CONFIG.populationSize / 2)];
+        const parentB = population[Math.floor(Math.random() * CONFIG.populationSize / 2)];
+        
+        const child = parentA.clone();
+        
+        // Crossover
+        for (let i = 0; i < child.w2.length; i++) {
+          if (Math.random() < 0.5) child.w2[i] = parentB.w2[i];
+        }
+        for (let i = 0; i < child.w1.length; i++) {
+          if (Math.random() < 0.5) child.w1[i] = parentB.w1[i];
+        }
+        
+        // Mutation
+        child.mutate(CONFIG.mutationRate);
+        
+        child.fitness = 0;
+        newPop.push(child);
+      }
+      
+      population = newPop;
+      generation++;
+    }
+    
+    // Submit top networks to server
+    async function submitToServer() {
+      if (population.length === 0) return;
+      
+      // Sort and get top networks
+      population.sort((a, b) => b.fitness - a.fitness);
+      
+      const toSubmit = population.slice(0, CONFIG.batchSize);
+      
+      try {
+        const response = await fetch(serverUrl + '/api/networks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            networks: toSubmit.map(net => ({
+              fitness: net.fitness,
+              hiddenSize: net.hiddenSize,
+              w1: Array.from(net.w1),
+              w2: Array.from(net.w2),
+              b1: Array.from(net.b1),
+              b2: Array.from(net.b2)
+            }))
+          })
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          networksGenerated += result.added;
+          log(`Submitted ${result.added} networks (rejected: ${result.rejected})`, 'success');
+        } else {
+          log(`Submit failed: ${response.status}`, 'error');
+        }
+      } catch (err) {
+        log(`Submit error: ${err.message}`, 'error');
+      }
+    }
+    
+    // Simulate a generation (for headless training)
+    function simulateGeneration() {
+      // Instead of running the game, we simulate fitness based on random scoring
+      // In a real headless trainer, you'd run the game logic here without rendering
+      
+      for (const net of population) {
+        // Simulate fitness - in reality this would come from game logic
+        // For now, we evolve based on previous fitness + random improvement
+        if (net.fitness === 0) {
+          net.fitness = Math.random() * 500;
+        } else {
+          // Small random improvement
+          net.fitness += (Math.random() - 0.3) * 200;
+        }
+      }
+    }
+    
+    // Training loop
+    async function train() {
+      if (!isRunning) return;
+      
+      // Simulate a generation
+      simulateGeneration();
+      
+      // Submit to server
+      await submitToServer();
+      
+      // Evolve
+      evolve();
+      
+      // Fetch server stats
+      await testServer();
+    }
+    
+    // Start training
+    function startTraining() {
+      if (isRunning) return;
+      
+      isRunning = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      
+      log('Training started', 'success');
+      
+      // Initialize if empty
+      if (population.length === 0) {
+        initPopulation();
+      }
+      
+      // Run training loop
+      trainingInterval = setInterval(train, CONFIG.batchInterval);
+      evolveInterval = setInterval(evolve, CONFIG.evolveInterval);
+    }
+    
+    // Stop training
+    function stopTraining() {
+      isRunning = false;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      
+      clearInterval(trainingInterval);
+      clearInterval(evolveInterval);
+      
+      log('Training stopped', 'warn');
+    }
+    
+    // Test server connection
+    async function testServer() {
+      try {
+        const resp = await fetch(serverUrl + '/health');
+        if (resp.ok) {
+          const health = await resp.json();
+          statusEl.className = 'status online';
+          statusEl.innerHTML = `<div class="success">🟢 Server Online</div><div>Networks: ${health.networks}, Best: ${Math.floor(health.bestFitness)}</div>`;
+          
+          const statsResp = await fetch(serverUrl + '/api/stats');
+          const stats = await statsResp.json();
+          updateUI(stats);
+          return stats;
+        }
+      } catch (err) {
+        statusEl.className = 'status offline';
+        statusEl.innerHTML = `<div class="error">🔴 Server Offline</div><div>${err.message}</div>`;
+      }
+      updateUI({});
+      return null;
+    }
+    
+    // Initialize
+    log('Headless Trainer Ready', 'info');
+    testServer();
+    initPopulation();
+  </script>
+</body>
+</html>

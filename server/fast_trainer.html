@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Llama AI - Fast Trainer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Courier New', monospace; background: #0a0a1a; color: #0f0; min-height: 100vh; padding: 20px; }
+    h1 { text-align: center; color: #f5c542; margin-bottom: 20px; }
+    .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .btn { padding: 15px 30px; font-size: 1.1em; font-family: inherit; background: #3C3B6E; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+    .btn:hover { background: #5a5aaa; }
+    .btn:disabled { background: #666; cursor: not-allowed; }
+    .btn.start { background: #27ae60; }
+    .btn.stop { background: #e74c3c; }
+    .status { text-align: center; padding: 20px; margin-bottom: 20px; background: #1a1a2e; border-radius: 8px; border: 2px solid #333; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 15px; margin-bottom: 20px; }
+    .stat-box { background: #16213e; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #3C3B6E; }
+    .stat-box .value { font-size: 2em; color: #f5c542; }
+    .stat-box .label { color: #888; font-size: 0.9em; }
+    .log { background: #1a1a2e; padding: 20px; border-radius: 8px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85em; line-height: 1.4; margin-top: 20px; }
+    .progress-bar { width: 100%; height: 20px; background: #16213e; border-radius: 10px; overflow: hidden; margin-top: 10px; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #27ae60, #2ecc71); transition: width 0.3s; }
+    .warn { color: #f5c542; }
+    .good { color: #2ecc71; }
+    .bad  { color: #e74c3c; }
+  </style>
+</head>
+<body>
+  <h1>🦙 Llama AI - Fast Trainer</h1>
+
+  <div id="status" class="status">
+    <div>Connecting to server...</div>
+  </div>
+
+  <div class="controls">
+    <button class="btn start" id="startBtn" onclick="startFastTraining()">▶ Start Fast Training</button>
+    <button class="btn stop"  id="stopBtn"  onclick="stopFastTraining()" disabled>⏹ Stop</button>
+    <button class="btn"       onclick="testServer()">🔄 Refresh</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-box"><div class="value" id="statGen">0</div><div class="label">Generation</div></div>
+    <div class="stat-box"><div class="value" id="statSims">0</div><div class="label">Simulations</div></div>
+    <div class="stat-box"><div class="value" id="statBestLocal">0</div><div class="label">Local Best</div></div>
+    <div class="stat-box"><div class="value" id="statServerBest">0</div><div class="label">Server Best</div></div>
+    <div class="stat-box"><div class="value" id="statFps">0</div><div class="label">Sims / sec</div></div>
+    <div class="stat-box"><div class="value" id="statSubmitted">0</div><div class="label">Submitted</div></div>
+  </div>
+
+  <div class="stat-box" style="margin-bottom:20px">
+    <div class="label">Best Network This Generation</div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div id="progressText" style="margin-top:5px;color:#888">Ready</div>
+  </div>
+
+  <div class="log" id="log"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+//  NEURAL NETWORK
+// ═══════════════════════════════════════════════════════════════════════
+class NeuralNetwork {
+  constructor(inputSize, hiddenSize, outputSize) {
+    this.inputSize  = inputSize;
+    this.hiddenSize = hiddenSize;
+    this.outputSize = outputSize;
+    this.w1 = new Float32Array(inputSize  * hiddenSize);
+    this.w2 = new Float32Array(hiddenSize * outputSize);
+    this.b1 = new Float32Array(hiddenSize);
+    this.b2 = new Float32Array(outputSize);
+    this.fitness = 0;
+    this.randomize();
+  }
+
+  randomize() {
+    const scale1 = Math.sqrt(2 / this.inputSize);
+    const scale2 = Math.sqrt(2 / this.hiddenSize);
+    for (let i = 0; i < this.w1.length; i++) this.w1[i] = (Math.random()*2-1) * scale1;
+    for (let i = 0; i < this.w2.length; i++) this.w2[i] = (Math.random()*2-1) * scale2;
+    for (let i = 0; i < this.b1.length; i++) this.b1[i] = 0;
+    for (let i = 0; i < this.b2.length; i++) this.b2[i] = 0;
+  }
+
+  clone() {
+    const nn = new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize);
+    nn.w1.set(this.w1); nn.w2.set(this.w2);
+    nn.b1.set(this.b1); nn.b2.set(this.b2);
+    nn.fitness = this.fitness;
+    return nn;
+  }
+
+  forward(inputs) {
+    const hidden = new Float32Array(this.hiddenSize);
+    for (let j = 0; j < this.hiddenSize; j++) {
+      let s = this.b1[j];
+      for (let i = 0; i < this.inputSize; i++) s += inputs[i] * this.w1[i * this.hiddenSize + j];
+      hidden[j] = Math.tanh(s);
+    }
+    const outputs = new Float32Array(this.outputSize);
+    for (let k = 0; k < this.outputSize; k++) {
+      let s = this.b2[k];
+      for (let j = 0; j < this.hiddenSize; j++) s += hidden[j] * this.w2[j * this.outputSize + k];
+      outputs[k] = Math.tanh(s);
+    }
+    return outputs;
+  }
+
+  mutate(rate, sigma = 0.25) {
+    for (let i = 0; i < this.w1.length; i++) if (Math.random() < rate) this.w1[i] += (Math.random()*2-1)*sigma;
+    for (let i = 0; i < this.w2.length; i++) if (Math.random() < rate) this.w2[i] += (Math.random()*2-1)*sigma;
+    for (let i = 0; i < this.b1.length; i++) if (Math.random() < rate) this.b1[i] += (Math.random()*2-1)*sigma;
+    for (let i = 0; i < this.b2.length; i++) if (Math.random() < rate) this.b2[i] += (Math.random()*2-1)*sigma;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  LEVEL DEFINITIONS  — closely match index.html's buildLevel(n)
+// ═══════════════════════════════════════════════════════════════════════
+const W = 800, H = 450;
+
+// Half-extents for the llama hitbox (used throughout)
+const LW = 12, LH = 18;   // half-width, half-height
+
+function createLevel(n) {
+  // Each enemy: { x (center), y (top), w, h, vx, patrolA, patrolB, type, baseY, floatTimer, dead }
+  // Platforms and hazards match index.html's buildLevel() geometry exactly.
+  const ground = { x: 0, y: 390, w: 800, h: 60 };
+
+  if (n === 1) {
+    return {
+      platforms: [
+        ground,
+        { x: 150, y: 310, w: 100, h: 16 },
+        { x: 300, y: 250, w: 100, h: 16 },
+        { x: 460, y: 300, w: 100, h: 16 },
+        { x: 600, y: 240, w: 120, h: 16 },
+        { x:  50, y: 220, w:  80, h: 16 },
+      ],
+      hazards: [
+        { x: 220, y: 376, w: 24, h: 14 },
+        { x: 430, y: 376, w: 24, h: 14 },
+        { x: 590, y: 376, w: 24, h: 14 },
+      ],
+      enemies: [
+        // walkers on ground (y-top = ground.y - h = 390 - 28 = 362)
+        { x: 350, y: 362, w: 32, h: 28, vx: 1.5,  patrolA: 290, patrolB: 410, type: 'walker',   dead: false },
+        { x: 550, y: 362, w: 32, h: 28, vx: 1.5,  patrolA: 480, patrolB: 620, type: 'walker',   dead: false },
+        // patroller on plat (plat top 310 → y = 310 - 28 = 282)
+        { x: 200, y: 282, w: 32, h: 28, vx: 1.2,  patrolA: 150, patrolB: 250, type: 'patroller',dead: false },
+        // gingers (flying): float around a base y
+        { x: 300, y: 190, w: 36, h: 36, vx: 1.2,  patrolA: 160, patrolB: 440, type: 'ginger',   dead: false, baseY: 190, floatTimer: 0 },
+        { x: 500, y: 150, w: 36, h: 36, vx: 1.2,  patrolA: 360, patrolB: 640, type: 'ginger',   dead: false, baseY: 150, floatTimer: 1.5 },
+      ],
+      coins: [
+        { x: 175, y: 295, collected: false }, { x: 200, y: 295, collected: false }, { x: 225, y: 295, collected: false },
+        { x: 325, y: 235, collected: false }, { x: 350, y: 235, collected: false },
+        { x: 625, y: 225, collected: false }, { x: 650, y: 225, collected: false }, { x: 675, y: 225, collected: false },
+      ],
+      flag:    { x: 720, y: 300, w: 20, h: 90 },
+      startX:  60,
+      startY:  372,   // = ground.y - LH = 390 - 18
+    };
+  }
+
+  if (n === 2) {
+    // Slightly different layout to train generalisation
+    return {
+      platforms: [
+        ground,
+        { x:  60, y: 320, w: 130, h: 16 },
+        { x: 240, y: 280, w: 130, h: 16 },
+        { x: 420, y: 240, w: 130, h: 16 },
+        { x: 590, y: 280, w: 160, h: 16 },
+        { x: 150, y: 190, w: 110, h: 16 },
+        { x: 470, y: 160, w: 110, h: 16 },
+      ],
+      hazards: [
+        { x: 340, y: 376, w: 24, h: 14 },
+        { x: 570, y: 376, w: 24, h: 14 },
+      ],
+      enemies: [
+        { x: 280, y: 362, w: 32, h: 28, vx: 1.5,  patrolA: 200, patrolB: 360, type: 'walker',   dead: false },
+        { x: 460, y: 362, w: 32, h: 28, vx: 1.5,  patrolA: 380, patrolB: 540, type: 'walker',   dead: false },
+        { x: 620, y: 252, w: 32, h: 28, vx: 1.2,  patrolA: 590, patrolB: 740, type: 'patroller',dead: false },
+        { x: 200, y: 140, w: 36, h: 36, vx: 1.2,  patrolA:  60, patrolB: 340, type: 'ginger',   dead: false, baseY: 140, floatTimer: 0.5 },
+        { x: 450, y: 110, w: 36, h: 36, vx: 1.2,  patrolA: 310, patrolB: 590, type: 'ginger',   dead: false, baseY: 110, floatTimer: 2.1 },
+        { x: 620, y: 160, w: 36, h: 36, vx: 1.0,  patrolA: 480, patrolB: 760, type: 'ginger',   dead: false, baseY: 160, floatTimer: 0.8 },
+      ],
+      coins: [
+        { x:  80, y: 305, collected: false }, { x: 110, y: 305, collected: false },
+        { x: 255, y: 265, collected: false }, { x: 285, y: 265, collected: false },
+        { x: 490, y: 145, collected: false }, { x: 520, y: 145, collected: false },
+      ],
+      flag:   { x: 730, y: 240, w: 20, h: 90 },
+      startX: 60,
+      startY: 372,
+    };
+  }
+
+  // Fallback: same as level 1 but mirrored slightly
+  return createLevel(1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SIMULATION  — headless, tick-by-tick
+// ═══════════════════════════════════════════════════════════════════════
+const GRAVITY   = 0.55;  // MUST match index.html
+const JUMP_F    = -12;   // MUST match index.html
+const MOVE_SPD  = 3.5;   // MUST match index.html
+const MAX_FRAMES = 2400; // 40 s at 60 fps
+
+function simulateNetwork(network, levelNum = 1) {
+  const level = createLevel(levelNum);
+
+  let x  = level.startX;
+  let y  = level.startY;
+  let vx = 0, vy = 0;
+  let onGround = true;
+  let facing   = 1;
+
+  // Deep-copy enemies so mutations don't persist between evaluations
+  const enemies = level.enemies.map(e => ({ ...e }));
+
+  let coinsCollected      = 0;
+  let enemiesKilled       = 0;
+  let score               = 0;
+  let maxX                = x;   // furthest right position ever reached
+  let stagnation          = 0;   // current consecutive frames without advancing maxX
+  let totalStagnantFrames = 0;   // ALL stagnant frames across entire run (used in fitness)
+  let frames              = 0;
+  let alive               = true;
+  let reachedFlag         = false;
+  const startX            = x;
+
+  while (frames < MAX_FRAMES && alive && !reachedFlag) {
+
+    // ── Step 1: Move enemies ──────────────────────────────────────────
+    for (const e of enemies) {
+      if (e.dead) continue;
+      e.x += e.vx;
+      if (e.x < e.patrolA || e.x > e.patrolB) e.vx = -e.vx;
+      if (e.type === 'ginger') {
+        e.floatTimer += 0.05;
+        e.y = e.baseY + Math.sin(e.floatTimer) * 14;
+      }
+    }
+
+    // ── Step 2: Build network inputs ─────────────────────────────────
+    //
+    // INPUT LAYOUT (52 values — identical to index.html's getGameState)
+    //
+    //  0      : x / W
+    //  1      : (W - x) / W          ← distance to right wall
+    //  2      : x / W                (duplicate, kept for backward compat)
+    //  3      : y / H
+    //  4      : (vx + 5) / 10
+    //  5      : (vy + 15) / 30
+    //  6      : onGround
+    //  7      : facing > 0
+    //  8      : gunAmmo (always 0 here)
+    //  9      : squashiePower (always 0)
+    // 10      : gingerWig (always 0)
+    // 11      : flag.x / W
+    // 12      : flag.y / H
+    // 13      : time remaining (1 → 0)
+    // 14..37  : up to 8 platforms  × 3 (x/W, y/H, w/W)
+    //           — sorted nearest first so the most relevant are always visible
+    // 38..51  : up to 3 live enemies × 4 (x/W, y/H, w/W, isGinger)
+    //           — sorted by horizontal distance so nearest enemy is always [38..41]
+    //
+    // Coins would start at idx 54 which is out of range.  We omit them to
+    // keep the layout 100 % compatible with the real game's getGameState().
+    // The AI learns to collect coins incidentally while moving toward the flag.
+
+    const inputs = new Float32Array(52);
+    let idx = 0;
+
+    inputs[idx++] = x / W;
+    inputs[idx++] = (W - x) / W;
+    inputs[idx++] = x / W;
+    inputs[idx++] = y / H;
+    inputs[idx++] = (vx + 5) / 10;
+    inputs[idx++] = (vy + 15) / 30;
+    inputs[idx++] = onGround ? 1 : 0;
+    inputs[idx++] = facing > 0 ? 1 : 0;
+    inputs[idx++] = 0; // gunAmmo
+    inputs[idx++] = 0; // squashiePower
+    inputs[idx++] = 0; // gingerWig
+    inputs[idx++] = level.flag.x / W;
+    inputs[idx++] = level.flag.y / H;
+    inputs[idx++] = 1 - (frames / MAX_FRAMES);
+    // idx = 14
+
+    // Platforms — sort by distance so nearest are first
+    const sortedPlats = level.platforms.slice().sort(
+      (a, b) => Math.abs((a.x + a.w/2) - x) - Math.abs((b.x + b.w/2) - x)
+    );
+    for (let i = 0; i < 8; i++) {
+      if (i < sortedPlats.length) {
+        inputs[idx++] = sortedPlats[i].x / W;
+        inputs[idx++] = sortedPlats[i].y / H;
+        inputs[idx++] = sortedPlats[i].w / W;
+      } else {
+        inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
+      }
+    }
+    // idx = 38
+
+    // Enemies — sorted nearest first
+    const liveEnemies = enemies.filter(e => !e.dead).sort(
+      (a, b) => Math.abs(a.x - x) - Math.abs(b.x - x)
+    );
+    for (let i = 0; i < 3 && idx + 3 < 52; i++) {
+      if (i < liveEnemies.length) {
+        const e = liveEnemies[i];
+        inputs[idx++] = e.x / W;
+        inputs[idx++] = e.y / H;
+        inputs[idx++] = e.w / W;
+        inputs[idx++] = e.type === 'ginger' ? 1 : 0;
+      } else {
+        inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
+      }
+    }
+    while (idx < 52) inputs[idx++] = 0;
+
+    // ── Step 3: Get action ───────────────────────────────────────────
+    const out = network.forward(inputs);
+    const goLeft  = out[0] > 0.5;
+    const goRight = out[1] > 0.5;
+    const doJump  = out[2] > 0.4;
+
+    // ── Step 4: Apply movement ───────────────────────────────────────
+    if      (goLeft)  { vx = -MOVE_SPD; facing = -1; }
+    else if (goRight) { vx =  MOVE_SPD; facing =  1; }
+    else              { vx  = 0; }
+
+    if (doJump && onGround) {
+      vy = JUMP_F;
+      onGround = false;
+    }
+
+    // ── Step 5: Physics ──────────────────────────────────────────────
+    vy += GRAVITY;
+    x  += vx;
+    y  += vy;
+
+    // Wall clamp
+    if (x < LW)      { x = LW;      }
+    if (x > W - LW)  { x = W - LW;  }
+
+    // ── Step 6: Platform collision ───────────────────────────────────
+    onGround = false;
+    for (const p of level.platforms) {
+      // Only collide from above (top landing)
+      if (x + LW > p.x && x - LW < p.x + p.w) {
+        if (vy >= 0 && y + LH >= p.y && y + LH <= p.y + vy + 2 && y < p.y) {
+          y        = p.y - LH;
+          vy       = 0;
+          onGround = true;
+          break;
+        }
+      }
+    }
+
+    // ── Step 7: Hazard (spike) collision — instant death ─────────────
+    for (const sp of level.hazards) {
+      if (x + LW > sp.x && x - LW < sp.x + sp.w &&
+          y + LH > sp.y && y - LH < sp.y + sp.h) {
+        alive = false;
+        break;
+      }
+    }
+    if (!alive) break;
+
+    // Fall off bottom
+    if (y > H + 60) { alive = false; break; }
+
+    // ── Step 8: Enemy collision ──────────────────────────────────────
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const ex = e.x + e.w / 2;
+      const ey = e.y + e.h / 2;
+      const dx = Math.abs(x - ex);
+      const dy = Math.abs(y - ey);
+      if (dx < LW + e.w / 2 - 4 && dy < LH + e.h / 2 - 4) {
+        // Stomp: llama falling from above
+        if (vy > 0 && y + LH < ey + 6) {
+          e.dead = true;
+          enemiesKilled++;
+          score += 200;
+          vy = -8;   // Bounce
+        } else {
+          // Side / bottom hit → die
+          alive = false;
+        }
+        break;
+      }
+    }
+    if (!alive) break;
+
+    // ── Step 9: Coin collection ──────────────────────────────────────
+    for (const c of level.coins) {
+      if (!c.collected && Math.abs(x - c.x) < LW + 10 && Math.abs(y - c.y) < LH + 10) {
+        c.collected = true;
+        coinsCollected++;
+        score += 100;
+      }
+    }
+
+    // ── Step 10: Flag reached ────────────────────────────────────────
+    const fl = level.flag;
+    if (x + LW > fl.x && x - LW < fl.x + fl.w && y + LH > fl.y && y - LH < fl.y + fl.h) {
+      reachedFlag = true;
+      score += 5000;
+      break;
+    }
+
+    // ── Step 11: Stagnation ──────────────────────────────────────────
+    if (x > maxX + 2) {
+      maxX       = x;
+      stagnation = 0;
+    } else {
+      stagnation++;
+      totalStagnantFrames++;   // accumulate ALL stagnant frames, not just current streak
+    }
+    // Terminate early if stuck for > 4 seconds (240 frames)
+    if (stagnation > 240) break;
+
+    frames++;
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  FITNESS FUNCTION
+  //
+  //  Key principle: a dead agent must NEVER outscore an alive agent with
+  //  equivalent progress, no matter how many enemies it killed first.
+  //
+  //  A flat death penalty fails this because enemy kills + progress can
+  //  exceed any fixed number.  Instead we use a SURVIVAL MULTIPLIER:
+  //  all accumulated in-run rewards are multiplied by 0.2 if dead.
+  //
+  //  Example with multiplier:
+  //    Kill 2 enemies + die at x=550  → (2450+900) × 0.2        =  670
+  //    Survive to x=550, no kills     → (2450)     × 1.0        = 2450
+  //    Reach the flag                 → (~9200)    × 1.0 + 8800 ≈ 18000
+  //
+  //  Dead agents still have positive fitness when they made real progress,
+  //  preserving the gradient so evolution knows "dying at x=500 is better
+  //  than dying at x=100" — just never better than surviving.
+  // ════════════════════════════════════════════════════════════════════
+
+  // All rewards that the agent "earned" during the run.
+  // Progress is relative to start so camping = zero.
+  const progressReward = (maxX - startX) * 5;
+  const enemyBonus     = enemiesKilled * 250;
+  const coinBonus      = coinsCollected * 80;
+  const scoreBonus     = score;
+
+  // Survival multiplier: death deflates everything earned in the run to 20%.
+  // This makes it impossible to "bank" kills and die profitably.
+  const survivalMult = alive ? 1.0 : 0.2;
+
+  const runReward = (progressReward + enemyBonus + coinBonus + scoreBonus) * survivalMult;
+
+  // Flag bonuses are only reachable alive, so no multiplier needed.
+  const flagBonus       = reachedFlag ? 8000 : 0;
+  const efficiencyBonus = reachedFlag ? Math.max(0, (MAX_FRAMES - frames) * 0.5) : 0;
+
+  // Stagnation: every non-advancing frame costs points regardless of survival.
+  const stagnationPenalty = totalStagnantFrames * 8;
+
+  // Mild time pressure.
+  const timePenalty = frames * 0.1;
+
+  // Negative fitness preserved for gradient — no Math.max(0,...) clamping.
+  const fitness = runReward + flagBonus + efficiencyBonus
+                - stagnationPenalty - timePenalty;
+
+  return { fitness, score, coinsCollected, enemiesKilled, maxX, frames, alive, reachedFlag };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MULTI-LEVEL EVALUATION
+//  Run each agent on both levels and average the fitness.
+//  This prevents the AI from over-fitting to a single level layout.
+// ═══════════════════════════════════════════════════════════════════════
+function evaluateNetwork(network) {
+  const r1 = simulateNetwork(network, 1);
+  const r2 = simulateNetwork(network, 2);
+  // Weighted: level 1 counts more because that's the first real level
+  return {
+    fitness:        r1.fitness * 0.6 + r2.fitness * 0.4,
+    reachedFlag:    r1.reachedFlag || r2.reachedFlag,
+    enemiesKilled:  r1.enemiesKilled + r2.enemiesKilled,
+    coinsCollected: r1.coinsCollected + r2.coinsCollected,
+    maxX:           Math.max(r1.maxX, r2.maxX),
+    alive:          r1.alive && r2.alive,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  EVOLUTIONARY ALGORITHM
+// ═══════════════════════════════════════════════════════════════════════
+const CONFIG = {
+  populationSize: 60,
+  eliteCount:     6,
+  mutationRate:   0.12,
+  mutationSigma:  0.22,
+  batchSize:      5,         // how many to submit per round
+};
+
+let population       = [];
+let generation       = 0;
+let totalSimulations = 0;
+let totalSubmitted   = 0;
+let isRunning        = false;
+let localBestFitness = -Infinity;
+let lastFpsTime      = 0;
+let simsSinceLastFps = 0;
+
+// ── Logging ─────────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+function log(msg, cls) {
+  const div = document.createElement('div');
+  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  if (cls) div.className = cls;
+  logEl.insertBefore(div, logEl.firstChild);
+  if (logEl.children.length > 80) logEl.removeChild(logEl.lastChild);
+}
+
+// ── Population init ──────────────────────────────────────────────────
+function initPopulation(serverNetworks = []) {
+  population = [];
+
+  // Load server networks first (they carry the best previously-found weights)
+  for (const nd of serverNetworks) {
+    try {
+      const nn = new NeuralNetwork(52, 48, 6);
+      if (nn.w1.length !== nd.w1?.length || nn.w2.length !== nd.w2?.length ||
+          nn.b1.length !== nd.b1?.length || nn.b2.length !== nd.b2?.length) {
+        log(`Skipping server network: size mismatch`, 'warn'); continue;
+      }
+      nn.w1.set(nd.w1); nn.w2.set(nd.w2); nn.b1.set(nd.b1); nn.b2.set(nd.b2);
+      nn.fitness = nd.fitness;
+      population.push(nn);
+    } catch (e) { log(`Error loading network: ${e.message}`, 'bad'); }
+  }
+
+  const serverCount = population.length;
+
+  // Fill remainder with random agents
+  while (population.length < CONFIG.populationSize) {
+    population.push(new NeuralNetwork(52, 48, 6));
+  }
+
+  generation = 0;
+  log(`Population ready: ${serverCount} from server + ${population.length - serverCount} random`, 'good');
+}
+
+// ── Tournament selection ─────────────────────────────────────────────
+function tournamentSelect(k = 5) {
+  let best = null;
+  for (let i = 0; i < k; i++) {
+    const candidate = population[Math.floor(Math.random() * population.length)];
+    if (!best || candidate.fitness > best.fitness) best = candidate;
+  }
+  return best;
+}
+
+// ── Evolution step ───────────────────────────────────────────────────
+function evolve() {
+  population.sort((a, b) => b.fitness - a.fitness);
+  const best = population[0];
+
+  if (best.fitness > localBestFitness) {
+    localBestFitness = best.fitness;
+    document.getElementById('statBestLocal').textContent = Math.floor(localBestFitness);
+  }
+
+  log(`Gen ${generation} — best: ${best.fitness.toFixed(0)}  alive: ${best.alive ? '✓' : '✗'}  flag: ${best.reachedFlag ? '🏁' : '-'}`,
+      best.reachedFlag ? 'good' : best.fitness > 0 ? '' : 'bad');
+
+  const newPop = [];
+
+  // Elitism: keep top agents unchanged
+  for (let i = 0; i < CONFIG.eliteCount; i++) newPop.push(population[i].clone());
+
+  // Fill rest via tournament selection + mutation
+  while (newPop.length < CONFIG.populationSize) {
+    const parent = tournamentSelect(5);
+    const child  = parent.clone();
+
+    // Occasionally do crossover between two parents
+    if (Math.random() < 0.3) {
+      const other = tournamentSelect(5);
+      for (let i = 0; i < child.w1.length; i++) if (Math.random() < 0.5) child.w1[i] = other.w1[i];
+      for (let i = 0; i < child.w2.length; i++) if (Math.random() < 0.5) child.w2[i] = other.w2[i];
+    }
+
+    // Adaptive mutation: if best fitness is negative, explore harder
+    const rate  = best.fitness < 0 ? CONFIG.mutationRate * 2  : CONFIG.mutationRate;
+    const sigma = best.fitness < 0 ? CONFIG.mutationSigma * 1.5 : CONFIG.mutationSigma;
+    child.mutate(rate, sigma);
+    child.fitness = 0;
+    newPop.push(child);
+  }
+
+  population = newPop;
+  generation++;
+  document.getElementById('statGen').textContent = generation;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  TRAINING LOOP
+// ═══════════════════════════════════════════════════════════════════════
+let evalIndex = 0;   // next agent to evaluate in the current generation
+
+async function runBatch() {
+  if (!isRunning) return;
+
+  // Evaluate a slice of the population
+  const batchSize = 8;
+  const end = Math.min(evalIndex + batchSize, population.length);
+
+  for (let i = evalIndex; i < end; i++) {
+    await new Promise(resolve => setTimeout(() => {
+      const result = evaluateNetwork(population[i]);
+      population[i].fitness        = result.fitness;
+      population[i].alive          = result.alive;
+      population[i].reachedFlag    = result.reachedFlag;
+      population[i].enemiesKilled  = result.enemiesKilled;
+      population[i].coinsCollected = result.coinsCollected;
+      population[i].maxX           = result.maxX;
+      totalSimulations += 2;   // evaluated on 2 levels
+      simsSinceLastFps += 2;
+      resolve();
+    }, 0));
+  }
+
+  evalIndex = end;
+
+  // When full generation evaluated:
+  //   1. submitBest FIRST — while fitness scores are still on the current population
+  //   2. THEN evolve — which resets children to fitness=0
+  //   3. await submitBest so we NEVER fire concurrent server requests (that blocks the monitor)
+  if (evalIndex >= population.length) {
+    await submitBest();   // ← awaited, runs before evolve so real fitness scores are used
+    evolve();
+    evalIndex = 0;
+
+    // Update progress bar (population already sorted by evolve)
+    const best = population[0];
+    const pct  = Math.min(100, Math.max(0, ((best.maxX || 0) - 60) / (W - 60) * 100));
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent =
+      `Gen ${generation}: maxX=${Math.floor(best.maxX || 0)}  fitness=${best.fitness.toFixed(0)}` +
+      (best.reachedFlag ? '  🏁 FLAG!' : best.alive ? '  ✓alive' : '  ✗died');
+  } else {
+    // Show partial progress
+    const pct = (evalIndex / population.length) * 100;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent =
+      `Gen ${generation}: evaluating ${evalIndex}/${population.length}...`;
+  }
+
+  // Update stats
+  document.getElementById('statSims').textContent = totalSimulations;
+
+  const now = performance.now();
+  if (now - lastFpsTime > 1000) {
+    document.getElementById('statFps').textContent =
+      Math.round(simsSinceLastFps * 1000 / (now - lastFpsTime));
+    simsSinceLastFps = 0;
+    lastFpsTime = now;
+  }
+
+  if (isRunning) requestAnimationFrame(runBatch);
+}
+
+// ── Submit best networks to server ──────────────────────────────────
+// Only submits every SUBMIT_EVERY generations so we don't hammer the server.
+const SUBMIT_EVERY = 3;
+
+async function submitBest() {
+  // Only hit the server every few generations
+  if (generation % SUBMIT_EVERY !== 0) return;
+
+  population.sort((a, b) => b.fitness - a.fitness);
+  const toSubmit = population.slice(0, CONFIG.batchSize).filter(n => n.fitness > 0);
+  if (toSubmit.length === 0) return;
+
+  try {
+    const resp = await fetch(serverUrl + '/api/networks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        networks: toSubmit.map(n => ({
+          fitness:    n.fitness,
+          hiddenSize: 48,
+          w1: Array.from(n.w1),
+          w2: Array.from(n.w2),
+          b1: Array.from(n.b1),
+          b2: Array.from(n.b2),
+        }))
+      })
+    });
+    if (resp.ok) {
+      const r = await resp.json();
+      totalSubmitted += r.added;
+      document.getElementById('statSubmitted').textContent = totalSubmitted;
+      // Update server best directly from POST response — no extra GET needed
+      if (r.bestFitness !== undefined) {
+        document.getElementById('statServerBest').textContent = Math.floor(r.bestFitness);
+        document.getElementById('status').innerHTML =
+          `<div style="color:#0f0">🟢 Server Online — Server best: ${Math.floor(r.bestFitness)}</div>`;
+      }
+      if (r.added > 0) log(`Submitted ${r.added} networks (server best: ${Math.floor(r.bestFitness)})`, 'good');
+    }
+  } catch (e) {
+    log(`Submit error: ${e.message}`, 'bad');
+  }
+  // ← no testServer() call here — that would fire 2 more requests every submission
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SERVER / UI CONTROLS
+// ═══════════════════════════════════════════════════════════════════════
+const serverUrl = window.location.origin;
+
+// Lightweight health check — only /health, one request, safe to call during training
+async function testServer() {
+  const statusEl = document.getElementById('status');
+  try {
+    const r = await fetch(serverUrl + '/health');
+    if (r.ok) {
+      const h = await r.json();
+      statusEl.innerHTML = `<div style="color:#0f0">🟢 Server Online — Networks: ${h.networks}</div>`;
+      document.getElementById('statServerBest').textContent = Math.floor(h.bestFitness);
+      return true;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<div style="color:#f00">🔴 Server Offline</div>`;
+  }
+  return false;
+}
+
+// Full fetch — downloads existing networks to seed population. Only called at startup.
+async function fetchServerNetworks() {
+  try {
+    const r = await fetch(serverUrl + '/api/networks?limit=20');
+    if (r.ok) {
+      const d = await r.json();
+      return d.networks || [];
+    }
+  } catch (e) { /* offline */ }
+  return [];
+}
+
+async function startFastTraining() {
+  if (isRunning) return;
+
+  await testServer();
+  log('Fetching server networks to seed population...', 'warn');
+  const serverNets = await fetchServerNetworks();
+
+  // Warn if the server has networks that might have been trained under old
+  // scoring rules (camping rewarded). User should clear them from monitor.html.
+  if (serverNets.length > 0) {
+    log(`⚠️  Loaded ${serverNets.length} server networks. If the llama still camps after ` +
+        `a few generations, use monitor.html → "Clear All Training" to wipe old data.`, 'warn');
+  }
+
+  initPopulation(serverNets);
+
+  isRunning = true;
+  evalIndex = 0;
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('stopBtn').disabled  = false;
+  log('Training started.', 'good');
+
+  lastFpsTime = performance.now();
+  requestAnimationFrame(runBatch);
+}
+
+function stopFastTraining() {
+  isRunning = false;
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled  = true;
+  log('Training stopped.');
+}
+
+// Init — lightweight health check only
+testServer();
+</script>
+</body>
+</html>
