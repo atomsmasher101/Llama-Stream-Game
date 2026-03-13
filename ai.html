@@ -4020,8 +4020,8 @@ const AI = {
     // Minimal survival bonus (just to prevent instant death rewards)
     const survivalBonus = Math.min(network.frames * 0.1, 100);
     
-    // Penalty for dying
-    const deathPenalty = network.deaths * 500;
+    // Penalty for dying - increased significantly to prevent "die to save points" strategy
+    const deathPenalty = network.deaths * 3000;
     
     // Stagnation penalty - penalize for staying in one place
     // Increased to discourage camping
@@ -4030,6 +4030,10 @@ const AI = {
     // Timeout penalty - steep penalty for running out of time
     // This strongly discourages the "stand and shoot until time runs out" strategy
     const timeoutPenalty = (network.timeoutDeaths || 0) * 5000;
+    
+    // Time penalty - penalize for taking too long to complete
+    // Encourages faster completion (1 point per frame after initial buffer)
+    const timePenalty = Math.max(0, (network.frames - 300) * 1);
     
     // Explorer bonus - encourage exploration
     // If this is an explorer network, give it a bonus for any progress
@@ -4055,7 +4059,7 @@ const AI = {
       console.log(`⚠️ Timeout deaths: ${network.timeoutDeaths}, penalty: ${timeoutPenalty}`);
     }
     
-    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty;
+    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty;
     network.score = score;
     network.collectiblesCollected = collectibleBonus;
   }
