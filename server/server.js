@@ -46,7 +46,10 @@ app.get('/api/networks', (req, res) => {
     w1: n.w1,
     w2: n.w2,
     b1: n.b1,
-    b2: n.b2
+    b2: n.b2,
+    producer: n.producer,
+    actionProfile: n.actionProfile,
+    trainingStats: n.trainingStats
   }));
 
   res.json({
@@ -277,6 +280,9 @@ function addNetwork(network) {
     w2: network.w2,
     b1: network.b1,
     b2: network.b2,
+    producer: network.producer || "unknown",
+    actionProfile: network.actionProfile || "full6",
+    trainingStats: network.trainingStats || null,
     submittedAt: new Date().toISOString()
   };
 
@@ -322,7 +328,10 @@ app.get('/api/networks', (req, res) => {
     w1: n.w1,
     w2: n.w2,
     b1: n.b1,
-    b2: n.b2
+    b2: n.b2,
+    producer: n.producer,
+    actionProfile: n.actionProfile,
+    trainingStats: n.trainingStats
   }));
 
   res.json({

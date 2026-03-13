@@ -3548,7 +3548,7 @@ const AI = {
   active: false,
   pausedForAI: false,
   inputSize: 52,
-  hiddenSize: 32,
+  hiddenSize: 48,
   outputSize: 6,
   serverUrl: (new URLSearchParams(window.location.search).get('server')) || 
              'https://llamagame-ai-server.wascomb.com',
@@ -3560,11 +3560,10 @@ const AI = {
     // Start with some random networks (will be replaced by server networks if available)
     const initialRandomCount = 10;
     for (let i = 0; i < initialRandomCount; i++) {
-      this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
+      this.population.push(new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize));
     }
     this.generation = 0;
     this.active = true;
-    this.hiddenSize = 48;
     
     // Try to connect to server and fetch networks
     console.log('init: checking server for networks...');
@@ -3573,7 +3572,7 @@ const AI = {
     
     // If we have fewer networks than desired, add more random networks
     while (this.population.length < populationSize) {
-      this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
+      this.population.push(new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize));
     }
     
     // Sort by fitness (best first)
@@ -3620,6 +3619,18 @@ const AI = {
       console.log('Could not reconnect, continuing offline');
     }
   },
+
+  isCompatibleNetworkShape(netData) {
+    const expectedW1 = this.inputSize * this.hiddenSize;
+    const expectedW2 = this.hiddenSize * this.outputSize;
+    const expectedB1 = this.hiddenSize;
+    const expectedB2 = this.outputSize;
+
+    return Array.isArray(netData?.w1) && netData.w1.length === expectedW1 &&
+           Array.isArray(netData?.w2) && netData.w2.length === expectedW2 &&
+           Array.isArray(netData?.b1) && netData.b1.length === expectedB1 &&
+           Array.isArray(netData?.b2) && netData.b2.length === expectedB2;
+  },
   
   async fetchServerNetworks() {
     if (!this.online || !this.currentUrl) {
@@ -3659,18 +3670,12 @@ const AI = {
           // Add server networks to population
           for (const netData of data.networks) {
             try {
-              const hiddenSize = netData.hiddenSize || 48;
-              const net = new NeuralNetwork(this.inputSize, hiddenSize, this.outputSize);
-              
-              // Check if sizes match before setting
-              if (net.w1.length !== netData.w1.length || 
-                  net.w2.length !== netData.w2.length ||
-                  net.b1.length !== netData.b1.length ||
-                  net.b2.length !== netData.b2.length) {
-                console.warn(`Network size mismatch, skipping: w1(${net.w1.length} vs ${netData.w1.length})`);
+              if (!this.isCompatibleNetworkShape(netData)) {
+                console.warn(`Skipping incompatible network shape (id: ${netData.id?.substring(0, 8) || 'unknown'})`);
                 continue;
               }
-              
+
+              const net = new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize);
               net.w1.set(netData.w1);
               net.w2.set(netData.w2);
               net.b1.set(netData.b1);
@@ -3678,7 +3683,10 @@ const AI = {
               net.fitness = netData.fitness;
               net.fromServer = true;
               net.id = netData.id;
-              
+              net.producer = netData.producer || "unknown";
+              net.actionProfile = netData.actionProfile || "full6";
+              net.trainingStats = netData.trainingStats || null;
+
               this.population.push(net);
               console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}, id: ${netData.id?.substring(0,8)}`);
             } catch (e) {
@@ -3717,6 +3725,15 @@ const AI = {
       console.log('submitNetwork: skipping - network too weak or invalid');
       return;
     }
+
+    if (network.hiddenSize !== this.hiddenSize ||
+        network.w1.length !== this.inputSize * this.hiddenSize ||
+        network.w2.length !== this.hiddenSize * this.outputSize ||
+        network.b1.length !== this.hiddenSize ||
+        network.b2.length !== this.outputSize) {
+      console.log('submitNetwork: skipping - incompatible network architecture for shared server pool');
+      return;
+    }
     if (!this.submitReady) {
       console.log('submitNetwork: rate-limited, skipping');
       return;
@@ -3733,11 +3750,14 @@ const AI = {
         networks: [{
           id: network.id || undefined, // Include original ID if present
           fitness: network.fitness,
-          hiddenSize: network.hiddenSize || 48,
+          hiddenSize: this.hiddenSize,
           w1: Array.from(network.w1),
           w2: Array.from(network.w2),
           b1: Array.from(network.b1),
-          b2: Array.from(network.b2)
+          b2: Array.from(network.b2),
+          producer: "ai",
+          actionProfile: "full6",
+          trainingStats: { levelsCompleted: network.levelsCompleted || 0, levelFullClears: network.levelFullClears || 0 }
         }]
       });
       
@@ -3886,6 +3906,21 @@ const AI = {
     // Add some noise for exploration
     const noise = 0.1;
     
+    const actionProfile = network?.actionProfile || 'full6';
+
+    // fast_trainer networks only train movement outputs [0..2].
+    if (actionProfile === 'movement3') {
+      return {
+        left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
+        right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
+        jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
+        jumpHeld: false,
+        spit: false,
+        shoot: false,
+        down: false
+      };
+    }
+
     return {
       left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
       right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
@@ -3978,6 +4013,7 @@ const AI = {
     network.maxStagnation = 0;
     // Timeout tracking - to discourage running out of time
     network.timeoutDeaths = 0;
+    network.levelFullClears = 0;
     // Explorer tracking
     network.isExplorer = network.isExplorer || false;
   },
@@ -4001,12 +4037,12 @@ const AI = {
       }
     }
     
-    // Level completion bonus - increases with each level!
-    const levelBonus = network.levelsCompleted * 5000;
+    // Level completion bonus - heavily prioritize campaign progression (all 5 levels)
+    const levelBonus = network.levelsCompleted * 12000;
     
     const scoreBonus = score * 3;
     
-    // Enemies killed - weighted heavily for Jimmy
+    // Enemies killed - useful, but completion is still the top objective
     let enemyBonus = 0;
     for (const e of lvlData?.enemies || []) {
       if (e.dead && e.deadTimer === 30 && !e.scored) {
@@ -4026,8 +4062,24 @@ const AI = {
     for (const b of lvlData?.gingerBabies || []) if (b.collected && !b.scored) { b.scored = true; collectibleBonus += 500; }
     for (const p of lvlData?.bigPots || []) if (p.collected && !p.scored) { p.scored = true; collectibleBonus += 750; }
     
-    // Progress toward flag (much higher reward)
-    let progressBonus = llama ? (llama.x / W) * 3000 : 0;
+    // Progress toward flag
+    let progressBonus = llama ? (llama.x / W) * 1200 : 0;
+
+    // Level-completion quality: prefer full clears (all enemies + all collectibles)
+    const totalEnemies = (lvlData?.enemies || []).length;
+    const deadEnemies = (lvlData?.enemies || []).filter(e => e.dead).length;
+    const enemyClearRatio = totalEnemies > 0 ? (deadEnemies / totalEnemies) : 1;
+
+    const levelCollectibles = [
+      ...(lvlData?.coins || []),
+      ...(lvlData?.squashies || []),
+      ...(lvlData?.guns || []),
+      ...(lvlData?.gingerBabies || []),
+      ...(lvlData?.bigPots || []),
+    ];
+    const collectedItems = levelCollectibles.filter(item => item.collected).length;
+    const collectibleClearRatio = levelCollectibles.length > 0 ? (collectedItems / levelCollectibles.length) : 1;
+    const clearQualityBonus = (enemyClearRatio + collectibleClearRatio) * 900;
     
     // Movement bonus - reduced significantly to prevent "wiggle" farming
     // Only reward significant movement, not tiny vibrations
@@ -4038,12 +4090,18 @@ const AI = {
     
     // Bonus for all coins
     if (network.allCoins) progressBonus += 1000;
+
+    // Bonus for fully clearing completed levels
+    const fullClearBonus = (network.levelFullClears || 0) * 5000;
+
+    // Penalize ending runs without campaign progress
+    const noLevelProgressPenalty = network.levelsCompleted === 0 ? 6000 : 0;
     
     // Minimal survival bonus (just to prevent instant death rewards)
     const survivalBonus = Math.min(network.frames * 0.1, 100);
     
     // Penalty for dying - increased significantly to prevent "die to save points" strategy
-    const deathPenalty = network.deaths * 10000;
+    const deathPenalty = network.deaths * 18000;
     
     // Stagnation penalty - penalize for staying in one place
     // Increased to discourage camping
@@ -4051,11 +4109,10 @@ const AI = {
     
     // Timeout penalty - steep penalty for running out of time
     // This strongly discourages the "stand and shoot until time runs out" strategy
-    const timeoutPenalty = (network.timeoutDeaths || 0) * 5000;
+    const timeoutPenalty = (network.timeoutDeaths || 0) * 9000;
     
-    // Time penalty - penalize for taking too long to complete
-    // Encourages faster completion (1 point per frame after initial buffer)
-    const timePenalty = Math.max(0, (network.frames - 300) * 1);
+    // Time penalty - keep pressure to complete quickly
+    const timePenalty = Math.max(0, (network.frames - 240) * 1.2);
     
     // Explorer bonus - encourage exploration
     // If this is an explorer network, give it a bonus for any progress
@@ -4081,7 +4138,12 @@ const AI = {
       console.log(`⚠️ Timeout deaths: ${network.timeoutDeaths}, penalty: ${timeoutPenalty}`);
     }
     
-    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty;
+    let rawFitness = levelBonus + fullClearBonus + clearQualityBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus + explorerBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty - noLevelProgressPenalty;
+
+    // Hard-gate early strategies: without at least one cleared level, fitness is capped.
+    if (network.levelsCompleted === 0) rawFitness = Math.min(rawFitness, 1500);
+
+    network.fitness = rawFitness;
     network.score = score;
     network.collectiblesCollected = collectibleBonus;
   }
@@ -4145,7 +4207,7 @@ function startGameForAI() {
   currentNetwork = AI.population[randomIdx];
   
   console.log(`Starting game with network ${randomIdx + 1}/${populationSize} (selected from first ${selectionSize})`);
-  console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}`);
+  console.log(`Network fitness: ${currentNetwork.fitness?.toFixed(0) || 'undefined'}, fromServer: ${currentNetwork.fromServer || false}, producer: ${currentNetwork.producer || "unknown"}, actionProfile: ${currentNetwork.actionProfile || "full6"}`);
   
   AI.resetForNewRun(currentNetwork);
   
@@ -4168,7 +4230,7 @@ function updateAI() {
   
   // Track collectibles
   for (const c of lvlData.coins) {
-    if (!c.collected && !c.tracked) {
+    if (c.collected && !c.tracked) {
       c.tracked = true;
       currentNetwork.coinsCollected++;
     }
@@ -4212,10 +4274,29 @@ function updateAI() {
   } else if (state === 'levelclear') {
     // Level completed!
     currentNetwork.levelsCompleted = level;
+
+    const allEnemiesDead = lvlData.enemies.every(e => e.dead);
+    const allCollectiblesCollected = [
+      ...lvlData.coins,
+      ...(lvlData.squashies || []),
+      ...(lvlData.guns || []),
+      ...(lvlData.gingerBabies || []),
+      ...(lvlData.bigPots || []),
+    ].every(item => item.collected);
+
+    if (allEnemiesDead && allCollectiblesCollected) {
+      currentNetwork.levelFullClears = (currentNetwork.levelFullClears || 0) + 1;
+      currentNetwork.fitness += 5000 + (level * 1000);
+      console.log(`✅ Level ${level} FULL CLEAR (enemies + collectibles)!`);
+    } else {
+      currentNetwork.fitness -= 1200;
+      console.log(`⚠️ Level ${level} cleared without full cleanup.`);
+    }
+
     console.log(`🎉 Level ${level} COMPLETE! Total score: ${score}`);
     
     // Add huge fitness bonus for completing a level
-    currentNetwork.fitness += (level * 3000);
+    currentNetwork.fitness += (level * 7000);
     
     // Hide overlay and continue automatically
     hideOverlay();
@@ -4223,7 +4304,8 @@ function updateAI() {
     if (level >= 5) {
       // Won the game! 
       currentNetwork.reachedFlag = true;
-      currentNetwork.fitness += 15000;
+      const campaignCompletionBonus = currentNetwork.levelFullClears >= 5 ? 60000 : 35000;
+      currentNetwork.fitness += campaignCompletionBonus;
       console.log(`🏆 GAME WON! Final score: ${score}`);
       
       // Submit network
@@ -4255,9 +4337,14 @@ function respawnAI() {
     console.log(`⚠️ TIME-OUT DEATH! Applying steep penalty.`);
     currentNetwork.timeoutDeaths = (currentNetwork.timeoutDeaths || 0) + 1;
   }
+
+  // Brutally punish dying before any level clear (prevents walk-forward-and-die exploitation)
+  if ((currentNetwork.levelsCompleted || 0) === 0) {
+    currentNetwork.fitness -= 12000;
+  }
   
   // Check if fitness is too low - if so, don't waste time respawning
-  const fitnessTooLow = currentNetwork.fitness < 5000;
+  const fitnessTooLow = currentNetwork.fitness < 8000;
   
   if (lives > 0 && currentNetwork.deaths < 3 && !fitnessTooLow) {
     // Try to respawn but track the death
@@ -4267,10 +4354,10 @@ function respawnAI() {
   } else {
     // Network died too many times or fitness too low, move to next
     currentNetwork.alive = false;
-    console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}${fitnessTooLow ? ' (fitness < 5000)' : ''}`);
+    console.log(`Network died ${currentNetwork.deaths} times, fitness: ${currentNetwork.fitness.toFixed(0)}${fitnessTooLow ? ' (fitness < 8000)' : ''}`);
     
     // Submit network if fitness is decent
-    if (currentNetwork.fitness > 100) {
+    if (currentNetwork.fitness > 100 && ((currentNetwork.levelsCompleted || 0) >= 2 || currentNetwork.reachedFlag)) {
       console.log(`Submitting network with fitness ${currentNetwork.fitness.toFixed(0)}`);
       AI.submitNetwork(currentNetwork.clone());
     }
