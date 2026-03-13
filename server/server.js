@@ -305,11 +305,50 @@ app.post('/api/networks/:id/score', (req, res) => {
 });
 
 app.get('/api/stats', (req, res) => {
+  const fastTrainerNetworks = networks.filter((n) => n.producer === 'fast_trainer');
+  const aiNetworks = networks.filter((n) => n.producer === 'ai');
+  const unknownNetworks = networks.filter((n) => !n.producer || n.producer === 'unknown');
+
+  const fastTrainerEvaluated = fastTrainerNetworks.filter((n) => (n.aiEvaluations || 0) > 0);
+  const pendingFastTrainer = fastTrainerNetworks.length - fastTrainerEvaluated.length;
+  const battleTestingProgress = fastTrainerNetworks.length > 0
+    ? (fastTrainerEvaluated.length / fastTrainerNetworks.length) * 100
+    : 0;
+
+  function avgFitness(items) {
+    return items.length > 0 ? items.reduce((sum, n) => sum + n.fitness, 0) / items.length : 0;
+  }
+
+  function bestFitness(items) {
+    return items.length > 0 ? Math.max(...items.map((n) => n.fitness)) : 0;
+  }
+
   res.json({
     totalNetworks: networks.length,
     bestFitness: networks.length > 0 ? networks[0].fitness : 0,
     averageFitness: networks.length > 0 ? networks.reduce((sum, n) => sum + n.fitness, 0) / networks.length : 0,
-    evaluatedFastTrainer: networks.filter((n) => n.producer === 'fast_trainer' && (n.aiEvaluations || 0) > 0).length,
+    evaluatedFastTrainer: fastTrainerEvaluated.length,
+    pendingFastTrainer,
+    battleTestingProgress,
+    producers: {
+      fastTrainer: {
+        count: fastTrainerNetworks.length,
+        bestFitness: bestFitness(fastTrainerNetworks),
+        averageFitness: avgFitness(fastTrainerNetworks),
+        evaluated: fastTrainerEvaluated.length,
+        pending: pendingFastTrainer,
+      },
+      ai: {
+        count: aiNetworks.length,
+        bestFitness: bestFitness(aiNetworks),
+        averageFitness: avgFitness(aiNetworks),
+      },
+      unknown: {
+        count: unknownNetworks.length,
+        bestFitness: bestFitness(unknownNetworks),
+        averageFitness: avgFitness(unknownNetworks),
+      },
+    },
   });
 });
 
