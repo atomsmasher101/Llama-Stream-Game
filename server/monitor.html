@@ -210,7 +210,37 @@
       <div class="label">Average Fitness</div>
     </div>
   </div>
-  
+  <div id="producerStats" class="stats" style="display: none; margin-top:-10px;">
+    <div class="stat-box">
+      <div class="value" id="fastCount">0</div>
+      <div class="label">Fast Trainer Count</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="fastBest">0</div>
+      <div class="label">Fast Trainer Best</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="fastAvg">0</div>
+      <div class="label">Fast Trainer Avg</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="aiCount">0</div>
+      <div class="label">In-Game AI Count</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="aiBest">0</div>
+      <div class="label">In-Game AI Best</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="aiAvg">0</div>
+      <div class="label">In-Game AI Avg</div>
+    </div>
+    <div class="stat-box">
+      <div class="value" id="unknownCount">0</div>
+      <div class="label">Unknown Producer</div>
+    </div>
+  </div>
+
   <button class="refresh-btn" onclick="fetchData()">🔄 Refresh</button>
   <button class="clear-btn" onclick="clearAllNetworks()">🗑 Clear All Training</button>
   
@@ -229,11 +259,13 @@
     async function fetchData() {
       const statusEl = document.getElementById('status');
       const statsEl = document.getElementById('stats');
+      const producerStatsEl = document.getElementById('producerStats');
       const networksEl = document.getElementById('networks');
       
       statusEl.className = 'status';
       statusEl.innerHTML = '<div class="loading">Loading...</div>';
       statsEl.style.display = 'none';
+      producerStatsEl.style.display = 'none';
       networksEl.innerHTML = '';
       
       try {
@@ -262,6 +294,29 @@
         document.getElementById('bestFitness').textContent = Math.floor(stats.bestFitness);
         document.getElementById('avgFitness').textContent = Math.floor(stats.averageFitness);
         statsEl.style.display = 'grid';
+
+        const networks = data.networks || [];
+        const fastNetworks = networks.filter(n => n.producer === 'fast_trainer');
+        const aiNetworks = networks.filter(n => n.producer === 'ai');
+        const unknownNetworks = networks.filter(n => !n.producer || n.producer === 'unknown');
+        function avg(arr) {
+          if (!arr.length) return 0;
+          var total = arr.reduce(function(sum, n) { return sum + (n.fitness || 0); }, 0);
+          return Math.floor(total / arr.length);
+        }
+        function best(arr) {
+          if (!arr.length) return 0;
+          return Math.floor(Math.max.apply(null, arr.map(function(n) { return n.fitness || 0; })));
+        }
+
+        document.getElementById('fastCount').textContent = fastNetworks.length;
+        document.getElementById('fastBest').textContent = best(fastNetworks);
+        document.getElementById('fastAvg').textContent = avg(fastNetworks);
+        document.getElementById('aiCount').textContent = aiNetworks.length;
+        document.getElementById('aiBest').textContent = best(aiNetworks);
+        document.getElementById('aiAvg').textContent = avg(aiNetworks);
+        document.getElementById('unknownCount').textContent = unknownNetworks.length;
+        producerStatsEl.style.display = 'grid';
         
         // Update networks
         if (data.networks && data.networks.length > 0) {
@@ -278,12 +333,13 @@
                 <div class="fitness">Fitness: ${Math.floor(net.fitness)}</div>
                 <div class="details">
                   Hidden Size: ${net.hiddenSize || 48}<br>
-                  Weights: w1[${net.w1?.length || 0}], w2[${net.w2?.length || 0}]<br>
-                  ID: ${net.id?.substring(0, 8) || 'N/A'}
+                  Weights: w1[${(net.w1 ? net.w1.length : 0)}], w2[${(net.w2 ? net.w2.length : 0)}]<br>
+                  ID: ${(net.id ? net.id.substring(0, 8) : 'N/A')}<br>
+                  Producer: ${net.producer || 'unknown'} (${net.actionProfile || 'n/a'})
                 </div>
                 <div class="weights">
-                  w1 sample: ${net.w1?.slice(0, 5).map(v => v.toFixed(3)).join(', ')}...<br>
-                  w2 sample: ${net.w2?.slice(0, 5).map(v => v.toFixed(3)).join(', ')}...
+                  w1 sample: ${(net.w1 ? net.w1.slice(0, 5).map(v => v.toFixed(3)).join(', ') : '')}...<br>
+                  w2 sample: ${(net.w2 ? net.w2.slice(0, 5).map(v => v.toFixed(3)).join(', ') : '')}...
                 </div>
                 <div class="button-row">
                   <button class="replay-btn" onclick="window.open('${replayUrl}', '_blank')">
