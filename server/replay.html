@@ -3931,7 +3931,7 @@ const AI = {
     const outputs = network.forward(inputs);
     
     // Add some noise for exploration
-    const noise = 0.1;
+    const noise = AI.replayMode ? 0 : 0.1;
     
     return {
       left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
