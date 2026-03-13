@@ -535,7 +535,7 @@ const CONFIG = {
   eliteCount:     6,
   mutationRate:   0.12,
   mutationSigma:  0.22,
-  batchSize:      5,         // how many to submit per round
+  batchSize:      10,        // send best-of-10 generations for real-game scoring
 };
 
 let population       = [];
@@ -571,6 +571,8 @@ function initPopulation(serverNetworks = []) {
       }
       nn.w1.set(nd.w1); nn.w2.set(nd.w2); nn.b1.set(nd.b1); nn.b2.set(nd.b2);
       nn.fitness = nd.fitness;
+      nn.externalScore = typeof nd.aiScore === "number" ? nd.aiScore : 0;
+      nn.serverId = nd.id || null;
       population.push(nn);
     } catch (e) { log(`Error loading network: ${e.message}`, 'bad'); }
   }
@@ -654,7 +656,9 @@ async function runBatch() {
   for (let i = evalIndex; i < end; i++) {
     await new Promise(resolve => setTimeout(() => {
       const result = evaluateNetwork(population[i]);
-      population[i].fitness        = result.fitness;
+      population[i].localFitness   = result.fitness;
+      const extScore = population[i].externalScore || 0;
+      population[i].fitness        = (result.fitness * 0.75) + (extScore * 0.25);
       population[i].alive          = result.alive;
       population[i].reachedFlag    = result.reachedFlag;
       population[i].enemiesKilled  = result.enemiesKilled;
@@ -677,6 +681,7 @@ async function runBatch() {
   if (evalIndex >= population.length) {
     await submitBest();   // ← awaited, runs before evolve so real fitness scores are used
     evolve();
+    if (generation % SUBMIT_EVERY === 0) await syncTopServerNetworks();
     evalIndex = 0;
 
     // Update progress bar (population already sorted by evolve)
@@ -710,14 +715,14 @@ async function runBatch() {
 
 // ── Submit best networks to server ──────────────────────────────────
 // Only submits every SUBMIT_EVERY generations so we don't hammer the server.
-const SUBMIT_EVERY = 3;
+const SUBMIT_EVERY = 10;
 
 async function submitBest() {
   // Only hit the server every few generations
   if (generation % SUBMIT_EVERY !== 0) return;
 
   population.sort((a, b) => b.fitness - a.fitness);
-  const toSubmit = population.slice(0, CONFIG.batchSize).filter(n => n.fitness > 0);
+  const toSubmit = population.slice(0, CONFIG.batchSize).filter(n => (n.localFitness ?? n.fitness) > 0);
   if (toSubmit.length === 0) return;
 
   try {
@@ -726,7 +731,8 @@ async function submitBest() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         networks: toSubmit.map(n => ({
-          fitness:    n.fitness,
+          fitness:    (n.localFitness ?? n.fitness),
+          trainerFitness: (n.localFitness ?? n.fitness),
           hiddenSize: 48,
           w1: Array.from(n.w1),
           w2: Array.from(n.w2),
@@ -734,7 +740,7 @@ async function submitBest() {
           b2: Array.from(n.b2),
           producer: "fast_trainer",
           actionProfile: "movement3",
-          trainingStats: { levelsCleared: n.levelsCleared || 0, fullClears: n.fullClears || 0 },
+          trainingStats: { levelsCleared: n.levelsCleared || 0, fullClears: n.fullClears || 0, blendedFitness: n.fitness },
         }))
       })
     });
@@ -748,7 +754,8 @@ async function submitBest() {
         document.getElementById('status').innerHTML =
           `<div style="color:#0f0">🟢 Server Online — Server best: ${Math.floor(r.bestFitness)}</div>`;
       }
-      if (r.added > 0) log(`Submitted ${r.added} networks (server best: ${Math.floor(r.bestFitness)})`, 'good');
+      if (r.added > 0) log(`Submitted ${r.added} networks for AI battle-testing (server best: ${Math.floor(r.bestFitness)})`, 'good');
+      await syncTopServerNetworks();
     }
   } catch (e) {
     log(`Submit error: ${e.message}`, 'bad');
@@ -781,13 +788,40 @@ async function testServer() {
 // Full fetch — downloads existing networks to seed population. Only called at startup.
 async function fetchServerNetworks() {
   try {
-    const r = await fetch(serverUrl + '/api/networks?limit=20');
+    const r = await fetch(serverUrl + '/api/networks?limit=30');
     if (r.ok) {
       const d = await r.json();
       return d.networks || [];
     }
   } catch (e) { /* offline */ }
   return [];
+}
+
+async function syncTopServerNetworks() {
+  try {
+    const r = await fetch(serverUrl + '/api/networks?limit=20');
+    if (!r.ok) return;
+    const d = await r.json();
+    const strong = (d.networks || []).filter(n => (n.aiEvaluations || 0) > 0);
+    if (strong.length === 0) return;
+
+    for (const nd of strong.slice(0, 5)) {
+      const nn = new NeuralNetwork(52, 48, 6);
+      if (nn.w1.length !== nd.w1?.length || nn.w2.length !== nd.w2?.length ||
+          nn.b1.length !== nd.b1?.length || nn.b2.length !== nd.b2?.length) continue;
+      nn.w1.set(nd.w1); nn.w2.set(nd.w2); nn.b1.set(nd.b1); nn.b2.set(nd.b2);
+      nn.externalScore = typeof nd.aiScore === 'number' ? nd.aiScore : 0;
+      nn.fitness = nd.fitness;
+      nn.serverId = nd.id || null;
+      population.push(nn);
+    }
+
+    population.sort((a, b) => b.fitness - a.fitness);
+    population = population.slice(0, CONFIG.populationSize);
+    log('Synced AI-scored server networks into population.', 'good');
+  } catch (e) {
+    log(`Server sync error: ${e.message}`, 'warn');
+  }
 }
 
 async function startFastTraining() {
