@@ -3547,7 +3547,7 @@ const AI = {
   generation: 0,
   active: false,
   pausedForAI: false,
-  inputSize: 50,
+  inputSize: 52,
   hiddenSize: 32,
   outputSize: 6,
   serverUrl: (new URLSearchParams(window.location.search).get('server')) || 
@@ -3658,16 +3658,32 @@ const AI = {
           
           // Add server networks to population
           for (const netData of data.networks) {
-            const net = new NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
-            net.w1.set(netData.w1);
-            net.w2.set(netData.w2);
-            net.b1.set(netData.b1);
-            net.b2.set(netData.b2);
-            net.fitness = netData.fitness;
-            net.fromServer = true;
-            
-            this.population.push(net);
-            console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}`);
+            try {
+              const hiddenSize = netData.hiddenSize || 48;
+              const net = new NeuralNetwork(this.inputSize, hiddenSize, this.outputSize);
+              
+              // Check if sizes match before setting
+              if (net.w1.length !== netData.w1.length || 
+                  net.w2.length !== netData.w2.length ||
+                  net.b1.length !== netData.b1.length ||
+                  net.b2.length !== netData.b2.length) {
+                console.warn(`Network size mismatch, skipping: w1(${net.w1.length} vs ${netData.w1.length})`);
+                continue;
+              }
+              
+              net.w1.set(netData.w1);
+              net.w2.set(netData.w2);
+              net.b1.set(netData.b1);
+              net.b2.set(netData.b2);
+              net.fitness = netData.fitness;
+              net.fromServer = true;
+              net.id = netData.id;
+              
+              this.population.push(net);
+              console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}, id: ${netData.id?.substring(0,8)}`);
+            } catch (e) {
+              console.warn(`Failed to add network: ${e.message}`);
+            }
           }
           
           // Sort population by fitness (descending) so best networks are first
