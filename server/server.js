@@ -384,6 +384,8 @@ app.post('/api/networks/:id/score', (req, res) => {
     const result = addBattleTestedNetwork(network);
     promoted = result.added;
     if (!promoted) {
+      untestedNetworks.push(network);
+      sortCollections();
       saveNetworks();
       return res.json({
         success: true,
