@@ -329,7 +329,7 @@ function simulateNetwork(network, levelNum = 1) {
 
     inputs[idx++] = x / W;
     inputs[idx++] = (W - x) / W;
-    inputs[idx++] = x / W;
+    inputs[idx++] = y / H; // Replaced duplicate x/W with y/H
     inputs[idx++] = y / H;
     inputs[idx++] = (vx + 5) / 10;
     inputs[idx++] = (vy + 15) / 30;
@@ -338,8 +338,11 @@ function simulateNetwork(network, levelNum = 1) {
     inputs[idx++] = 0; // gunAmmo
     inputs[idx++] = 0; // squashiePower
     inputs[idx++] = 0; // gingerWig
-    inputs[idx++] = level.flag.x / W;
-    inputs[idx++] = level.flag.y / H;
+    
+    // FIX: RELATIVE flag coordinates (matches ai.html)
+    inputs[idx++] = (level.flag.x - x) / W;
+    inputs[idx++] = (level.flag.y - y) / H;
+    
     inputs[idx++] = 1 - (frames / MAX_FRAMES);
     // idx = 14
 

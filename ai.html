@@ -558,8 +558,8 @@ const AI={
     let idx=0;
     inputs[idx++]=llama.x/W;
     inputs[idx++]=(W-llama.x-llama.w)/W;
-    inputs[idx++]=llama.x/W;
-    inputs[idx++]=llama.y/H;
+    inputs[idx++]=llama.y/H; // Replaced duplicate llama.x/W with llama.y/H for better vertical awareness
+    inputs[idx++]=llama.y/H; // Keep for compatibility if needed, though index 3 is also llama.y/H
     inputs[idx++]=(llama.vx+5)/10;
     inputs[idx++]=(llama.vy+15)/30;
     inputs[idx++]=llama.onGround?1:0;
@@ -567,8 +567,12 @@ const AI={
     inputs[idx++]=llama.gunAmmo/9;
     inputs[idx++]=llama.squashiePower>0?1:0;
     inputs[idx++]=llama.gingerWig>0?1:0;
-    inputs[idx++]=lvlData.flag.x/W;
-    inputs[idx++]=lvlData.flag.y/H;
+    
+    // FIX: Provide RELATIVE coordinates to the flag. 
+    // Absolute coordinates are hard for the AI to use for navigation.
+    inputs[idx++]=(lvlData.flag.x - llama.x)/W; 
+    inputs[idx++]=(lvlData.flag.y - llama.y)/H;
+    
     inputs[idx++]=bombTimer/TIMER_START;
     const sortedPlats=lvlData.platforms.slice().sort((a,b)=>Math.abs((a.x+a.w/2)-llama.x)-Math.abs((b.x+b.w/2)-llama.x));
     for(let i=0;i<8;i++){
@@ -633,7 +637,13 @@ const AI={
     const levelBonus=network.levelsCompleted*12000;const scoreBonus=score*3;
     let enemyBonus=0;for(const e of lvlData?.enemies||[]){if(e.dead&&e.deadTimer===30&&!e.scored){e.scored=true;if(e.type==='jimmy')enemyBonus+=800;else if(e.type==='volanradooga')enemyBonus+=400;else if(e.type==='ginger')enemyBonus+=300;else enemyBonus+=200;}}
     let collectibleBonus=0;for(const c of lvlData?.coins||[])if(c.collected&&!c.scored){c.scored=true;collectibleBonus+=150;}for(const s of lvlData?.squashies||[])if(s.collected&&!s.scored){s.scored=true;collectibleBonus+=400;}for(const g of lvlData?.guns||[])if(g.collected&&!g.scored){g.scored=true;collectibleBonus+=300;}for(const b of lvlData?.gingerBabies||[])if(b.collected&&!b.scored){b.scored=true;collectibleBonus+=500;}for(const p of lvlData?.bigPots||[])if(p.collected&&!p.scored){p.scored=true;collectibleBonus+=750;}
-    let progressBonus=llama?(llama.x/W)*1200:0;
+    let progressBonus=0;
+    if(llama && lvlData){
+      const dx = llama.x - lvlData.flag.x;
+      const dy = llama.y - (lvlData.flag.y + 45); // Target middle of flag
+      const distToFlag = Math.sqrt(dx*dx + dy*dy);
+      progressBonus = (1.0 - Math.min(1, distToFlag / W)) * 3000;
+    }
     const totalEnemies=(lvlData?.enemies||[]).length;const deadEnemies=(lvlData?.enemies||[]).filter(e=>e.dead).length;const enemyClearRatio=totalEnemies>0?(deadEnemies/totalEnemies):1;
     const levelCollectibles=[...(lvlData?.coins||[]),...(lvlData?.squashies||[]),...(lvlData?.guns||[]),...(lvlData?.gingerBabies||[]),...(lvlData?.bigPots||[])];const collectedItems=levelCollectibles.filter(item=>item.collected).length;const collectibleClearRatio=levelCollectibles.length>0?(collectedItems/levelCollectibles.length):1;const clearQualityBonus=(enemyClearRatio+collectibleClearRatio)*900;
     const movementBonus=llama?Math.abs(llama.vx)*2:0;if(network.jimmyKilled)progressBonus+=2000;if(network.allCoins)progressBonus+=1000;

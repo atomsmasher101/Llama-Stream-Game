@@ -3820,16 +3820,11 @@ const AI = {
   
   getGameState() {
     if (!llama || !lvlData) return new Float32Array(this.inputSize).fill(0);
-    
     const inputs = new Float32Array(this.inputSize);
     let idx = 0;
-    
-    // Level boundaries
-    inputs[idx++] = llama.x / W; // Distance from left edge (normalized)
-    inputs[idx++] = (W - llama.x - llama.w) / W; // Distance from right edge (normalized)
-    
-    // Llama state (normalized to 0-1)
     inputs[idx++] = llama.x / W;
+    inputs[idx++] = (W - llama.x - llama.w) / W;
+    inputs[idx++] = llama.y / H; // Replaced duplicate x/W with y/H
     inputs[idx++] = llama.y / H;
     inputs[idx++] = (llama.vx + 5) / 10;
     inputs[idx++] = (llama.vy + 15) / 30;
@@ -3839,17 +3834,17 @@ const AI = {
     inputs[idx++] = llama.squashiePower > 0 ? 1 : 0;
     inputs[idx++] = llama.gingerWig > 0 ? 1 : 0;
     
-    // Flag position
-    inputs[idx++] = lvlData.flag.x / W;
-    inputs[idx++] = lvlData.flag.y / H;
+    // FIX: RELATIVE flag coordinates (matches ai.html and fast_trainer)
+    inputs[idx++] = (lvlData.flag.x - llama.x) / W;
+    inputs[idx++] = (lvlData.flag.y - llama.y) / H;
     
-    // Timer (danger indicator)
     inputs[idx++] = bombTimer / TIMER_START;
-    
-    // Platforms - take top 8
+
+    // Platforms - sorted by distance (nearest first) — matches fast_trainer encoding
+    const sortedPlats = lvlData.platforms.slice().sort((a, b) => Math.abs((a.x + a.w/2) - llama.x) - Math.abs((b.x + b.w/2) - llama.x));
     for (let i = 0; i < 8; i++) {
-      if (i < lvlData.platforms.length) {
-        const p = lvlData.platforms[i];
+      if (i < sortedPlats.length) {
+        const p = sortedPlats[i];
         inputs[idx++] = p.x / W;
         inputs[idx++] = p.y / H;
         inputs[idx++] = p.w / W;
@@ -3857,48 +3852,44 @@ const AI = {
         inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
       }
     }
-    
-    // Enemies - take top 8
-    for (let i = 0; i < 8; i++) {
-      if (i < lvlData.enemies.length && !lvlData.enemies[i].dead) {
-        const e = lvlData.enemies[i];
+
+    // Enemies - capped at 3, sorted by distance — matches ai.html
+    const sortedEnemies = lvlData.enemies.filter(e => !e.dead).sort((a, b) => Math.abs(a.x - llama.x) - Math.abs(b.x - llama.x));
+    for (let i = 0; i < 3; i++) {
+      if (i < sortedEnemies.length) {
+        const e = sortedEnemies[i];
         inputs[idx++] = e.x / W;
         inputs[idx++] = e.y / H;
-        inputs[idx++] = e.type === 'jimmy' ? 1 : (e.type === 'ginger' ? 0.5 : 0.25);
-        inputs[idx++] = e.type === 'volanradooga' ? 0.75 : 0;
-        if (e.type === 'jimmy') inputs[idx - 1] = 1 + (e.hp || 1) / 5;
+        inputs[idx++] = e.w / W;
+        inputs[idx++] = e.type === 'volanradooga' ? 1 : (e.type === 'ginger' ? 0.5 : 0);
       } else {
         inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
       }
     }
-    
+
     // Coins - take top 4
-    let coinsCollected = 0;
+    let coinsCount = 0;
     for (let i = 0; i < 4; i++) {
       if (i < lvlData.coins.length && !lvlData.coins[i].collected) {
         const c = lvlData.coins[i];
         inputs[idx++] = c.x / W;
         inputs[idx++] = c.y / H;
-        coinsCollected++;
+        coinsCount++;
       } else {
         inputs[idx++] = 0; inputs[idx++] = 0;
       }
     }
-    inputs[idx++] = coinsCollected / 4;
-    
+    inputs[idx++] = coinsCount / 4;
+
     // Collectibles
-    let squashies = 0;
-    for (let i = 0; i < lvlData.squashies?.length; i++) {
-      if (!lvlData.squashies[i].collected) squashies++;
-    }
-    inputs[idx++] = squashies > 0 ? 1 : 0;
-    
-    let guns = 0;
-    for (let i = 0; i < lvlData.guns?.length; i++) {
-      if (!lvlData.guns[i].collected) guns++;
-    }
-    inputs[idx++] = guns > 0 ? 1 : 0;
-    
+    let sqCount = 0;
+    if (lvlData.squashies) { for (let i = 0; i < lvlData.squashies.length; i++) if (!lvlData.squashies[i].collected) sqCount++; }
+    inputs[idx++] = sqCount > 0 ? 1 : 0;
+
+    let gnCount = 0;
+    if (lvlData.guns) { for (let i = 0; i < lvlData.guns.length; i++) if (!lvlData.guns[i].collected) gnCount++; }
+    inputs[idx++] = gnCount > 0 ? 1 : 0;
+
     // Spikes/hazards - closest 2
     for (let i = 0; i < 2; i++) {
       if (i < lvlData.hazards.length) {
@@ -3909,34 +3900,25 @@ const AI = {
         inputs[idx++] = 0; inputs[idx++] = 0;
       }
     }
-    
+
     // Falling objects danger
-    let fallingDanger = 0;
-    for (const w of waffles) {
-      if (!w.collected && Math.abs(w.x - llama.x) < 60) fallingDanger = 1;
-    }
-    for (const g of gummyBears) {
-      if (!g.collected && Math.abs(g.x - llama.x) < 60) fallingDanger = Math.max(fallingDanger, 0.8);
-    }
-    inputs[idx++] = fallingDanger;
-    
+    let fDanger = 0;
+    for (const w of waffles) if (!w.collected && Math.abs(w.x - llama.x) < 60) fDanger = 1;
+    for (const g of gummyBears) if (!g.collected && Math.abs(g.x - llama.x) < 60) fDanger = Math.max(fDanger, 0.8);
+    inputs[idx++] = fDanger;
+
     // Enemies alive count
-    let enemiesAlive = 0;
-    for (const e of lvlData.enemies) {
-      if (!e.dead) enemiesAlive++;
-    }
-    inputs[idx++] = enemiesAlive / 10;
-    
+    let eAlive = 0;
+    for (const e of lvlData.enemies) if (!e.dead) eAlive++;
+    inputs[idx++] = eAlive / 10;
+
     return inputs;
   },
-  
+
   getAction(network) {
     const inputs = this.getGameState();
     const outputs = network.forward(inputs);
-    
-    // Add some noise for exploration
     const noise = AI.replayMode ? 0 : 0.1;
-    
     const actionProfile = network?.actionProfile || "full6";
 
     if (actionProfile === "movement3") {
@@ -3946,7 +3928,8 @@ const AI = {
         jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
         jumpHeld: false,
         spit: false,
-        shoot: false
+        shoot: false,
+        down: false
       };
     }
 
@@ -3959,14 +3942,13 @@ const AI = {
       shoot: outputs[5] > 0.7 && llama.gunAmmo > 0
     };
   },
-  
+
   applyAction(action) {
     keys['ArrowLeft'] = action.left;
     keys['ArrowRight'] = action.right;
     keys['ArrowUp'] = action.jump || action.jumpHeld;
     keys['KeyW'] = action.jump || action.jumpHeld;
-  },
-  
+  },  
   evolve() {
     // Sort by fitness
     this.population.sort((a, b) => b.fitness - a.fitness);
