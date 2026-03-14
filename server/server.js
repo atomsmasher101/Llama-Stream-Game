@@ -100,18 +100,21 @@ function isValidNetworkObject(net) {
   return true;
 }
 
-function sortCollections() {
-  testedNetworks.sort((a, b) => {
-    const aScore = isValidNumber(a.aiScore) ? a.aiScore : a.fitness;
-    const bScore = isValidNumber(b.aiScore) ? b.aiScore : b.fitness;
-    return bScore - aScore;
-  });
+function getTestedScore(network) {
+  if (isValidNumber(network?.aiScore)) return network.aiScore;
+  if (isValidNumber(network?.fitness)) return network.fitness;
+  return -Infinity;
+}
 
-  untestedNetworks.sort((a, b) => {
-    const aScore = isValidNumber(a.trainerFitness) ? a.trainerFitness : a.fitness;
-    const bScore = isValidNumber(b.trainerFitness) ? b.trainerFitness : b.fitness;
-    return bScore - aScore;
-  });
+function getUntestedScore(network) {
+  if (isValidNumber(network?.trainerFitness)) return network.trainerFitness;
+  if (isValidNumber(network?.fitness)) return network.fitness;
+  return -Infinity;
+}
+
+function sortCollections() {
+  testedNetworks.sort((a, b) => getTestedScore(b) - getTestedScore(a));
+  untestedNetworks.sort((a, b) => getUntestedScore(b) - getUntestedScore(a));
 }
 
 function saveNetworks() {
@@ -185,16 +188,16 @@ function addBattleTestedNetwork(network) {
   }
 
   sortCollections();
-  const weakest = testedNetworks[testedNetworks.length - 1];
-  const addedScore = isValidNumber(added.aiScore) ? added.aiScore : added.fitness;
-  const weakestScore = isValidNumber(weakest?.aiScore) ? weakest.aiScore : weakest?.fitness;
+  const weakestIndex = testedNetworks.length - 1;
+  const weakest = testedNetworks[weakestIndex];
+  const addedScore = getTestedScore(added);
+  const weakestScore = getTestedScore(weakest);
 
   if (!weakest || addedScore > weakestScore) {
-    testedNetworks.push(added);
+    testedNetworks[weakestIndex] = added;
     sortCollections();
-    testedNetworks = testedNetworks.slice(0, MAX_NETWORKS);
     saveNetworks();
-    return { added: true, network: added };
+    return { added: true, network: added, replacedId: weakest?.id || null };
   }
 
   return { added: false, network: added, reason: 'Outside top battle-tested 100' };
@@ -384,6 +387,8 @@ app.post('/api/networks/:id/score', (req, res) => {
     const result = addBattleTestedNetwork(network);
     promoted = result.added;
     if (!promoted) {
+      untestedNetworks.push(network);
+      sortCollections();
       saveNetworks();
       return res.json({
         success: true,
