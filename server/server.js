@@ -7,6 +7,7 @@ const app = express();
 const PORT = 3000;
 const DATA_FILE = path.join(__dirname, 'networks.json');
 const MAX_NETWORKS = 100;
+const MAX_UNTESTED = 200;
 const MAX_SUBMIT = 10;
 const MIN_FITNESS = 100;
 const INITIAL_POOL_SIZE = 20;
@@ -173,6 +174,11 @@ function addUntestedNetwork(network) {
   const added = normalizeNetwork(network);
   untestedNetworks.push(added);
   sortCollections();
+  
+  if (untestedNetworks.length > MAX_UNTESTED) {
+    untestedNetworks = untestedNetworks.slice(0, MAX_UNTESTED);
+  }
+  
   saveNetworks();
   return added;
 }

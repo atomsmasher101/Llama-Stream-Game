@@ -121,7 +121,7 @@ class NeuralNetwork {
 const W = 800, H = 450;
 
 // Half-extents for the llama hitbox (used throughout)
-const LW = 12, LH = 18;   // half-width, half-height
+const LW = 14, LH = 18;   // half-width, half-height (Total: 28x36, matches ai.html)
 
 function createLevel(n) {
   const ground = { x: 0, y: 390, w: 800, h: 60 };
@@ -183,7 +183,7 @@ function createLevel(n) {
         { x: 620, y: 160, w: 36, h: 36, vx: 1.0,  patrolA: 480, patrolB: 760, type: 'ginger',   dead: false, baseY: 160, floatTimer: 0.8 },
         // FIX: volanradooga added to match real game level 2; trains the network to handle
         // a diving airborne threat it would otherwise encounter for the first time in the real game.
-        { x: 400, y:  40, w: 40, h: 34, type: 'volanradooga', dead: false, baseX: 400, baseY: 40, floatTimer: 0.0, vx: 0, vy: 0 },
+        { x: 350, y:  40, w: 40, h: 34, type: 'volanradooga', dead: false, baseX: 350, baseY: 40, floatTimer: 0.0, vx: 0, vy: 0, state: 'patrol', attackCooldown: 0, chaseTimer: 0 },
       ],
       coins: [
         { x:  80, y: 305, collected: false }, { x: 110, y: 305, collected: false },
@@ -236,36 +236,76 @@ function simulateNetwork(network, levelNum = 1) {
 
     // ── Step 1: Move enemies ──────────────────────────────────────────
     for (const e of enemies) {
-      if (e.dead) continue;
+      if (e.dead) {
+        if (e.deadTimer > 0) e.deadTimer--; // not used logic-wise but good for consistency
+        continue;
+      }
 
-      // FIX: volanradooga chases the llama within aggro range, then patrols.
-      // This matches the real game behaviour and teaches the network to dodge a
-      // diving aerial threat it would otherwise only encounter for the first time
-      // in the real game (causing immediate unexplained deaths).
+      // FIX: volanradooga now fully matches ai.html's State Machine.
+      // It patrols, chases, attacks (dives), and retreats.
       if (e.type === 'volanradooga') {
         e.floatTimer += 0.04;
-        const dx = x - e.x, dy = y - e.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < 180) {
-          e.vx = (e.vx || 0) + Math.sign(dx) * 0.3;
-          e.vy = (e.vy || 0) + Math.sign(dy) * 0.2;
-          e.vx = Math.max(-4, Math.min(4, e.vx));
+        if (e.attackCooldown > 0) e.attackCooldown--;
+
+        const dx = (x + LW) - (e.x + e.w/2);
+        const dy = (y + LH) - (e.y + e.h/2);
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const AGGRO = 180;
+
+        if (e.state === 'patrol') {
+          e.x = e.baseX + Math.sin(e.floatTimer * 0.7) * 110;
+          e.y = e.baseY + Math.sin(e.floatTimer * 1.3) * 18;
+          if (dist < AGGRO) {
+            e.state = 'chase';
+            e.chaseTimer = 0;
+          }
+        } else if (e.state === 'chase') {
+          e.vx = (e.vx || 0) + Math.sign(dx) * 0.35;
+          e.vy = (e.vy || 0) + Math.sign(dy) * 0.25;
+          e.vx = Math.max(-4.5, Math.min(4.5, e.vx));
           e.vy = Math.max(-4, Math.min(4, e.vy));
-          e.x += e.vx; e.y += e.vy;
-          e.y = Math.max(10, Math.min(H * 0.55, e.y));
-        } else {
-          e.x = e.baseX + Math.sin(e.floatTimer * 0.7) * 80;
-          e.y = e.baseY + Math.sin(e.floatTimer * 1.3) * 14;
-          e.vx = 0; e.vy = 0;
+          e.x += e.vx;
+          e.y += e.vy;
+          e.chaseTimer++;
+
+          if (e.y < 10) { e.y = 10; e.vy = Math.abs(e.vy); }
+          if (e.y > H * 0.55) { e.y = H * 0.55; e.vy = -Math.abs(e.vy); }
+
+          if (dist < 60 && e.attackCooldown === 0) {
+            e.state = 'attack';
+          }
+          if (dist > AGGRO * 1.4 || e.chaseTimer > 200) {
+            e.state = 'retreat';
+          }
+        } else if (e.state === 'attack') {
+          e.vx = dx / 12;
+          e.vy = dy / 12;
+          e.x += e.vx;
+          e.y += e.vy;
+          e.attackCooldown = 90;
+          e.state = 'retreat';
+        } else if (e.state === 'retreat') {
+          e.vx = (e.vx || 0) + (e.baseX - e.x) * 0.02;
+          e.vy = (e.vy || 0) + (e.baseY - e.y) * 0.02;
+          e.vx *= 0.88;
+          e.vy *= 0.88;
+          e.x += e.vx;
+          e.y += e.vy;
+          const retDist = Math.hypot(e.x - e.baseX, e.y - e.baseY);
+          if (retDist < 20) e.state = 'patrol';
+          if (dist < AGGRO && e.attackCooldown === 0) e.state = 'chase';
         }
+
+        e.x = Math.max(0, Math.min(W - e.w, e.x));
+        e.y = Math.max(5, Math.min(H * 0.6, e.y));
         continue;
       }
 
       e.x += e.vx;
       if (e.x < e.patrolA || e.x > e.patrolB) e.vx = -e.vx;
       if (e.type === 'ginger') {
-        e.floatTimer += 0.05;
-        e.y = e.baseY + Math.sin(e.floatTimer) * 14;
+        e.floatTimer += 0.06;
+        e.y = e.baseY + Math.sin(e.floatTimer) * 22;
       }
     }
 
