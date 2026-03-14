@@ -249,7 +249,7 @@
         const stats = await statsResp.json();
         
         // Fetch networks
-        const networksResp = await fetch(SERVER_URL + '/api/networks?limit=50');
+        const networksResp = await fetch(SERVER_URL + '/api/networks?source=tested&limit=50');
         const data = await networksResp.json();
         
         // Update status

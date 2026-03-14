@@ -3638,7 +3638,7 @@ const AI = {
       return;
     }
     
-    const url = this.currentUrl + '/api/networks?limit=20';
+    const url = this.currentUrl + '/api/networks?source=tested&limit=20';
     console.log('fetchServerNetworks: attempting to fetch from', url);
     
     try {

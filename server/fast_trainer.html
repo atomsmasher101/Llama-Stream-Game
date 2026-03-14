@@ -788,7 +788,7 @@ async function testServer() {
 // Full fetch — downloads existing networks to seed population. Only called at startup.
 async function fetchServerNetworks() {
   try {
-    const r = await fetch(serverUrl + '/api/networks?limit=30');
+    const r = await fetch(serverUrl + '/api/networks?source=tested&limit=30');
     if (r.ok) {
       const d = await r.json();
       return d.networks || [];
@@ -799,7 +799,7 @@ async function fetchServerNetworks() {
 
 async function syncTopServerNetworks() {
   try {
-    const r = await fetch(serverUrl + '/api/networks?limit=20');
+    const r = await fetch(serverUrl + '/api/networks?source=tested&limit=20');
     if (!r.ok) return;
     const d = await r.json();
     const strong = (d.networks || []).filter(n => (n.aiEvaluations || 0) > 0);
