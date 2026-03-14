@@ -124,8 +124,6 @@ const W = 800, H = 450;
 const LW = 12, LH = 18;   // half-width, half-height
 
 function createLevel(n) {
-  // Each enemy: { x (center), y (top), w, h, vx, patrolA, patrolB, type, baseY, floatTimer, dead }
-  // Platforms and hazards match index.html's buildLevel() geometry exactly.
   const ground = { x: 0, y: 390, w: 800, h: 60 };
 
   if (n === 1) {
@@ -144,12 +142,9 @@ function createLevel(n) {
         { x: 590, y: 376, w: 24, h: 14 },
       ],
       enemies: [
-        // walkers on ground (y-top = ground.y - h = 390 - 28 = 362)
         { x: 350, y: 362, w: 32, h: 28, vx: 1.5,  patrolA: 290, patrolB: 410, type: 'walker',   dead: false },
         { x: 550, y: 362, w: 32, h: 28, vx: 1.5,  patrolA: 480, patrolB: 620, type: 'walker',   dead: false },
-        // patroller on plat (plat top 310 → y = 310 - 28 = 282)
         { x: 200, y: 282, w: 32, h: 28, vx: 1.2,  patrolA: 150, patrolB: 250, type: 'patroller',dead: false },
-        // gingers (flying): float around a base y
         { x: 300, y: 190, w: 36, h: 36, vx: 1.2,  patrolA: 160, patrolB: 440, type: 'ginger',   dead: false, baseY: 190, floatTimer: 0 },
         { x: 500, y: 150, w: 36, h: 36, vx: 1.2,  patrolA: 360, patrolB: 640, type: 'ginger',   dead: false, baseY: 150, floatTimer: 1.5 },
       ],
@@ -160,12 +155,11 @@ function createLevel(n) {
       ],
       flag:    { x: 720, y: 300, w: 20, h: 90 },
       startX:  60,
-      startY:  372,   // = ground.y - LH = 390 - 18
+      startY:  372,
     };
   }
 
   if (n === 2) {
-    // Slightly different layout to train generalisation
     return {
       platforms: [
         ground,
@@ -187,6 +181,9 @@ function createLevel(n) {
         { x: 200, y: 140, w: 36, h: 36, vx: 1.2,  patrolA:  60, patrolB: 340, type: 'ginger',   dead: false, baseY: 140, floatTimer: 0.5 },
         { x: 450, y: 110, w: 36, h: 36, vx: 1.2,  patrolA: 310, patrolB: 590, type: 'ginger',   dead: false, baseY: 110, floatTimer: 2.1 },
         { x: 620, y: 160, w: 36, h: 36, vx: 1.0,  patrolA: 480, patrolB: 760, type: 'ginger',   dead: false, baseY: 160, floatTimer: 0.8 },
+        // FIX: volanradooga added to match real game level 2; trains the network to handle
+        // a diving airborne threat it would otherwise encounter for the first time in the real game.
+        { x: 400, y:  40, w: 40, h: 34, type: 'volanradooga', dead: false, baseX: 400, baseY: 40, floatTimer: 0.0, vx: 0, vy: 0 },
       ],
       coins: [
         { x:  80, y: 305, collected: false }, { x: 110, y: 305, collected: false },
@@ -199,16 +196,16 @@ function createLevel(n) {
     };
   }
 
-  // Fallback: same as level 1 but mirrored slightly
+  // Fallback: same as level 1
   return createLevel(1);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  SIMULATION  — headless, tick-by-tick
 // ═══════════════════════════════════════════════════════════════════════
-const GRAVITY   = 0.55;  // MUST match index.html
-const JUMP_F    = -12;   // MUST match index.html
-const MOVE_SPD  = 3.5;   // MUST match index.html
+const GRAVITY   = 0.55;
+const JUMP_F    = -12;
+const MOVE_SPD  = 3.5;
 const MAX_FRAMES = 2400; // 40 s at 60 fps
 
 function simulateNetwork(network, levelNum = 1) {
@@ -222,15 +219,14 @@ function simulateNetwork(network, levelNum = 1) {
   let onGround = true;
   let facing   = 1;
 
-  // Deep-copy enemies so mutations don't persist between evaluations
   const enemies = level.enemies.map(e => ({ ...e }));
 
   let coinsCollected      = 0;
   let enemiesKilled       = 0;
   let score               = 0;
-  let maxX                = x;   // furthest right position ever reached
-  let stagnation          = 0;   // current consecutive frames without advancing maxX
-  let totalStagnantFrames = 0;   // ALL stagnant frames across entire run (used in fitness)
+  let maxX                = x;
+  let stagnation          = 0;
+  let totalStagnantFrames = 0;
   let frames              = 0;
   let alive               = true;
   let reachedFlag         = false;
@@ -241,6 +237,30 @@ function simulateNetwork(network, levelNum = 1) {
     // ── Step 1: Move enemies ──────────────────────────────────────────
     for (const e of enemies) {
       if (e.dead) continue;
+
+      // FIX: volanradooga chases the llama within aggro range, then patrols.
+      // This matches the real game behaviour and teaches the network to dodge a
+      // diving aerial threat it would otherwise only encounter for the first time
+      // in the real game (causing immediate unexplained deaths).
+      if (e.type === 'volanradooga') {
+        e.floatTimer += 0.04;
+        const dx = x - e.x, dy = y - e.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 180) {
+          e.vx = (e.vx || 0) + Math.sign(dx) * 0.3;
+          e.vy = (e.vy || 0) + Math.sign(dy) * 0.2;
+          e.vx = Math.max(-4, Math.min(4, e.vx));
+          e.vy = Math.max(-4, Math.min(4, e.vy));
+          e.x += e.vx; e.y += e.vy;
+          e.y = Math.max(10, Math.min(H * 0.55, e.y));
+        } else {
+          e.x = e.baseX + Math.sin(e.floatTimer * 0.7) * 80;
+          e.y = e.baseY + Math.sin(e.floatTimer * 1.3) * 14;
+          e.vx = 0; e.vy = 0;
+        }
+        continue;
+      }
+
       e.x += e.vx;
       if (e.x < e.patrolA || e.x > e.patrolB) e.vx = -e.vx;
       if (e.type === 'ginger') {
@@ -251,30 +271,18 @@ function simulateNetwork(network, levelNum = 1) {
 
     // ── Step 2: Build network inputs ─────────────────────────────────
     //
-    // INPUT LAYOUT (52 values — identical to index.html's getGameState)
+    // INPUT LAYOUT (52 values — must match ai.html's getGameState exactly)
     //
-    //  0      : x / W
-    //  1      : (W - x) / W          ← distance to right wall
-    //  2      : x / W                (duplicate, kept for backward compat)
-    //  3      : y / H
-    //  4      : (vx + 5) / 10
-    //  5      : (vy + 15) / 30
-    //  6      : onGround
-    //  7      : facing > 0
-    //  8      : gunAmmo (always 0 here)
-    //  9      : squashiePower (always 0)
-    // 10      : gingerWig (always 0)
-    // 11      : flag.x / W
-    // 12      : flag.y / H
-    // 13      : time remaining (1 → 0)
-    // 14..37  : up to 8 platforms  × 3 (x/W, y/H, w/W)
-    //           — sorted nearest first so the most relevant are always visible
-    // 38..51  : up to 3 live enemies × 4 (x/W, y/H, w/W, isGinger)
-    //           — sorted by horizontal distance so nearest enemy is always [38..41]
+    //  0–1   : left/right edge distance
+    //  2–10  : llama state (x, y, vx, vy, onGround, facing, gunAmmo, squashie, wig)
+    //  11–13 : flag x/y, time remaining
+    //  14–37 : 8 platforms × 3 (x/W, y/H, w/W) — sorted nearest first
+    //  38–49 : 3 enemies × 4 (x/W, y/H, type, isVolan) — sorted nearest first
+    //  50–51 : remaining slots (unused here, kept as 0)
     //
-    // Coins would start at idx 54 which is out of range.  We omit them to
-    // keep the layout 100 % compatible with the real game's getGameState().
-    // The AI learns to collect coins incidentally while moving toward the flag.
+    // Sorting by distance is critical: it means input slot 38 always holds
+    // "the nearest enemy" regardless of enemy creation order.  ai.html was
+    // updated to use the same sort, eliminating the primary transfer gap.
 
     const inputs = new Float32Array(52);
     let idx = 0;
@@ -295,7 +303,7 @@ function simulateNetwork(network, levelNum = 1) {
     inputs[idx++] = 1 - (frames / MAX_FRAMES);
     // idx = 14
 
-    // Platforms — sort by distance so nearest are first
+    // Platforms — sorted by distance (nearest first)
     const sortedPlats = level.platforms.slice().sort(
       (a, b) => Math.abs((a.x + a.w/2) - x) - Math.abs((b.x + b.w/2) - x)
     );
@@ -310,7 +318,7 @@ function simulateNetwork(network, levelNum = 1) {
     }
     // idx = 38
 
-    // Enemies — sorted nearest first
+    // Enemies — sorted by distance (nearest first), capped at 3 to stay within 52 slots
     const liveEnemies = enemies.filter(e => !e.dead).sort(
       (a, b) => Math.abs(a.x - x) - Math.abs(b.x - x)
     );
@@ -320,7 +328,7 @@ function simulateNetwork(network, levelNum = 1) {
         inputs[idx++] = e.x / W;
         inputs[idx++] = e.y / H;
         inputs[idx++] = e.w / W;
-        inputs[idx++] = e.type === 'ginger' ? 1 : 0;
+        inputs[idx++] = e.type === 'volanradooga' ? 1 : (e.type === 'ginger' ? 0.5 : 0);
       } else {
         inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
       }
@@ -348,14 +356,12 @@ function simulateNetwork(network, levelNum = 1) {
     x  += vx;
     y  += vy;
 
-    // Wall clamp
     if (x < LW)      { x = LW;      }
     if (x > W - LW)  { x = W - LW;  }
 
     // ── Step 6: Platform collision ───────────────────────────────────
     onGround = false;
     for (const p of level.platforms) {
-      // Only collide from above (top landing)
       if (x + LW > p.x && x - LW < p.x + p.w) {
         if (vy >= 0 && y + LH >= p.y && y + LH <= p.y + vy + 2 && y < p.y) {
           y        = p.y - LH;
@@ -376,7 +382,6 @@ function simulateNetwork(network, levelNum = 1) {
     }
     if (!alive) break;
 
-    // Fall off bottom
     if (y > H + 60) { alive = false; break; }
 
     // ── Step 8: Enemy collision ──────────────────────────────────────
@@ -387,14 +392,12 @@ function simulateNetwork(network, levelNum = 1) {
       const dx = Math.abs(x - ex);
       const dy = Math.abs(y - ey);
       if (dx < LW + e.w / 2 - 4 && dy < LH + e.h / 2 - 4) {
-        // Stomp: llama falling from above
         if (vy > 0 && y + LH < ey + 6) {
           e.dead = true;
           enemiesKilled++;
           score += 200;
-          vy = -8;   // Bounce
+          vy = -8;
         } else {
-          // Side / bottom hit → die
           alive = false;
         }
         break;
@@ -425,9 +428,8 @@ function simulateNetwork(network, levelNum = 1) {
       stagnation = 0;
     } else {
       stagnation++;
-      totalStagnantFrames++;   // accumulate ALL stagnant frames, not just current streak
+      totalStagnantFrames++;
     }
-    // Terminate early if stuck for > 4 seconds (240 frames)
     if (stagnation > 240) break;
 
     frames++;
@@ -436,78 +438,76 @@ function simulateNetwork(network, levelNum = 1) {
   // ════════════════════════════════════════════════════════════════════
   //  FITNESS FUNCTION
   //
-  //  Key principle: a dead agent must NEVER outscore an alive agent with
-  //  equivalent progress, no matter how many enemies it killed first.
+  //  Key changes vs original:
   //
-  //  A flat death penalty fails this because enemy kills + progress can
-  //  exceed any fixed number.  Instead we use a SURVIVAL MULTIPLIER:
-  //  all accumulated in-run rewards are multiplied by 0.2 if dead.
+  //  1. EXPONENTIAL stagnation penalty (was flat * 8).
+  //     The first 60 stagnant frames are cheap (4 pts each) so jumping-
+  //     and-backtracking isn't penalised.  Beyond that, each additional
+  //     frame costs exponentially more, making camping catastrophic while
+  //     keeping legitimate backtracking affordable.
   //
-  //  Example with multiplier:
-  //    Kill 2 enemies + die at x=550  → (2450+900) × 0.2        =  670
-  //    Survive to x=550, no kills     → (2450)     × 1.0        = 2450
-  //    Reach the flag                 → (~9200)    × 1.0 + 8800 ≈ 18000
+  //  2. No-flag fitness cap raised.
+  //     The old hard cap of 2500 for any non-flag run created a false
+  //     ceiling: a network at x=700 (near-flag) scored the same as one at
+  //     x=200.  The gradient disappeared, so evolution stopped improving
+  //     near-flag survivors.  Now only runs that made negligible progress
+  //     (< 100 px from start) are capped.
   //
-  //  Dead agents still have positive fitness when they made real progress,
-  //  preserving the gradient so evolution knows "dying at x=500 is better
-  //  than dying at x=100" — just never better than surviving.
+  //  3. Survival multiplier unchanged (0.05) — dead agents can never
+  //     outscore an equivalent alive agent.
   // ════════════════════════════════════════════════════════════════════
 
-  // All rewards that the agent "earned" during the run.
-  // Progress is relative to start so camping = zero.
   const progressReward = (maxX - startX) * 2.5;
   const enemyBonus     = enemiesKilled * 450;
   const coinBonus      = coinsCollected * 350;
   const scoreBonus     = score;
 
   const enemyClearRatio = totalEnemies > 0 ? (enemiesKilled / totalEnemies) : 1;
-  const coinClearRatio = totalCoins > 0 ? (coinsCollected / totalCoins) : 1;
-  const clearQualityBonus = reachedFlag ? (enemyClearRatio + coinClearRatio) * 2400 : (enemyClearRatio + coinClearRatio) * 300;
+  const coinClearRatio  = totalCoins   > 0 ? (coinsCollected / totalCoins)  : 1;
+  const clearQualityBonus = reachedFlag
+    ? (enemyClearRatio + coinClearRatio) * 2400
+    : (enemyClearRatio + coinClearRatio) * 300;
   const fullClear = reachedFlag && enemiesKilled === totalEnemies && coinsCollected === totalCoins;
 
-  // Survival multiplier: death deflates everything earned in the run to 20%.
-  // This makes it impossible to "bank" kills and die profitably.
   const survivalMult = alive ? 1.0 : 0.05;
 
   const runReward = (progressReward + enemyBonus + coinBonus + scoreBonus) * survivalMult;
 
-  // Flag bonuses are only reachable alive, so no multiplier needed.
-  const flagBonus       = reachedFlag ? 7000 : 0;
-  const fullClearBonus  = fullClear ? 10000 : 0;
+  const flagBonus      = reachedFlag ? 7000 : 0;
+  const fullClearBonus = fullClear   ? 10000 : 0;
   const efficiencyBonus = reachedFlag ? Math.max(0, (MAX_FRAMES - frames) * 0.8) : 0;
   const incompleteClearPenalty = reachedFlag && !fullClear ? 5000 : 0;
 
-  // Stagnation: every non-advancing frame costs points regardless of survival.
-  const stagnationPenalty = totalStagnantFrames * 8;
+  // FIX: exponential stagnation penalty.  Camping for 60+ frames is increasingly
+  // catastrophic; the first 60 frames are cheap to allow legitimate backtracking.
+  const stagnationPenalty = totalStagnantFrames < 60
+    ? totalStagnantFrames * 4
+    : 240 + Math.pow(totalStagnantFrames - 60, 1.6) * 2;
 
-  // Mild time pressure.
-  const timePenalty = frames * 0.3;
-
-  // Negative fitness preserved for gradient — no Math.max(0,...) clamping.
-  const earlyDeathPenalty = !alive && frames < 240 ? 12000 : 0;
-  const deathPenalty = !alive ? 8000 : 0;
+  const timePenalty        = frames * 0.3;
+  const earlyDeathPenalty  = !alive && frames < 240 ? 12000 : 0;
+  const deathPenalty       = !alive ? 8000 : 0;
 
   let fitness = runReward + clearQualityBonus + flagBonus + fullClearBonus + efficiencyBonus
-              - stagnationPenalty - timePenalty - incompleteClearPenalty - deathPenalty - earlyDeathPenalty;
+              - stagnationPenalty - timePenalty - incompleteClearPenalty
+              - deathPenalty - earlyDeathPenalty;
 
-  // No-flag runs are strictly capped to avoid rewarding simple forward-then-die behavior.
-  if (!reachedFlag) fitness = Math.min(fitness, 2500);
+  // FIX: only cap runs that barely moved — preserve the gradient for near-flag
+  // survivors so evolution knows "dying at x=700 is better than dying at x=100".
+  if (!reachedFlag && maxX < startX + 100) fitness = Math.min(fitness, 500);
 
   return { fitness, score, coinsCollected, enemiesKilled, maxX, frames, alive, reachedFlag, fullClear };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  MULTI-LEVEL EVALUATION
-//  Run each agent on both levels and average the fitness.
-//  This prevents the AI from over-fitting to a single level layout.
 // ═══════════════════════════════════════════════════════════════════════
 function evaluateNetwork(network) {
   const runs = [1, 2, 1, 2, 1].map(levelNum => simulateNetwork(network, levelNum));
-  const fullClears = runs.filter(r => r.fullClear).length;
+  const fullClears   = runs.filter(r => r.fullClear).length;
   const levelsCleared = runs.filter(r => r.reachedFlag).length;
   const campaignBonus = (levelsCleared * 16000) + (fullClears * 12000);
 
-  // Weighted campaign score across 5 simulated stages.
   const weightedFitness =
     (runs[0].fitness * 1.0) +
     (runs[1].fitness * 1.1) +
@@ -535,7 +535,7 @@ const CONFIG = {
   eliteCount:     6,
   mutationRate:   0.12,
   mutationSigma:  0.22,
-  batchSize:      10,        // send best-of-10 generations for real-game scoring
+  batchSize:      10,
 };
 
 let population       = [];
@@ -547,7 +547,6 @@ let localBestFitness = -Infinity;
 let lastFpsTime      = 0;
 let simsSinceLastFps = 0;
 
-// ── Logging ─────────────────────────────────────────────────────────
 const logEl = document.getElementById('log');
 function log(msg, cls) {
   const div = document.createElement('div');
@@ -557,11 +556,9 @@ function log(msg, cls) {
   if (logEl.children.length > 80) logEl.removeChild(logEl.lastChild);
 }
 
-// ── Population init ──────────────────────────────────────────────────
 function initPopulation(serverNetworks = []) {
   population = [];
 
-  // Load server networks first (they carry the best previously-found weights)
   for (const nd of serverNetworks) {
     try {
       const nn = new NeuralNetwork(52, 48, 6);
@@ -578,8 +575,6 @@ function initPopulation(serverNetworks = []) {
   }
 
   const serverCount = population.length;
-
-  // Fill remainder with random agents
   while (population.length < CONFIG.populationSize) {
     population.push(new NeuralNetwork(52, 48, 6));
   }
@@ -588,7 +583,6 @@ function initPopulation(serverNetworks = []) {
   log(`Population ready: ${serverCount} from server + ${population.length - serverCount} random`, 'good');
 }
 
-// ── Tournament selection ─────────────────────────────────────────────
 function tournamentSelect(k = 5) {
   let best = null;
   for (let i = 0; i < k; i++) {
@@ -598,7 +592,6 @@ function tournamentSelect(k = 5) {
   return best;
 }
 
-// ── Evolution step ───────────────────────────────────────────────────
 function evolve() {
   population.sort((a, b) => b.fitness - a.fitness);
   const best = population[0];
@@ -612,24 +605,19 @@ function evolve() {
       best.reachedFlag ? 'good' : best.fitness > 0 ? '' : 'bad');
 
   const newPop = [];
-
-  // Elitism: keep top agents unchanged
   for (let i = 0; i < CONFIG.eliteCount; i++) newPop.push(population[i].clone());
 
-  // Fill rest via tournament selection + mutation
   while (newPop.length < CONFIG.populationSize) {
     const parent = tournamentSelect(5);
     const child  = parent.clone();
 
-    // Occasionally do crossover between two parents
     if (Math.random() < 0.3) {
       const other = tournamentSelect(5);
       for (let i = 0; i < child.w1.length; i++) if (Math.random() < 0.5) child.w1[i] = other.w1[i];
       for (let i = 0; i < child.w2.length; i++) if (Math.random() < 0.5) child.w2[i] = other.w2[i];
     }
 
-    // Adaptive mutation: if best fitness is negative, explore harder
-    const rate  = best.fitness < 0 ? CONFIG.mutationRate * 2  : CONFIG.mutationRate;
+    const rate  = best.fitness < 0 ? CONFIG.mutationRate * 2   : CONFIG.mutationRate;
     const sigma = best.fitness < 0 ? CONFIG.mutationSigma * 1.5 : CONFIG.mutationSigma;
     child.mutate(rate, sigma);
     child.fitness = 0;
@@ -644,12 +632,11 @@ function evolve() {
 // ═══════════════════════════════════════════════════════════════════════
 //  TRAINING LOOP
 // ═══════════════════════════════════════════════════════════════════════
-let evalIndex = 0;   // next agent to evaluate in the current generation
+let evalIndex = 0;
 
 async function runBatch() {
   if (!isRunning) return;
 
-  // Evaluate a slice of the population
   const batchSize = 8;
   const end = Math.min(evalIndex + batchSize, population.length);
 
@@ -666,7 +653,7 @@ async function runBatch() {
       population[i].maxX           = result.maxX;
       population[i].levelsCleared  = result.levelsCleared;
       population[i].fullClears     = result.fullClears;
-      totalSimulations += 5;   // evaluated on 5 simulated campaign stages
+      totalSimulations += 5;
       simsSinceLastFps += 5;
       resolve();
     }, 0));
@@ -674,17 +661,12 @@ async function runBatch() {
 
   evalIndex = end;
 
-  // When full generation evaluated:
-  //   1. submitBest FIRST — while fitness scores are still on the current population
-  //   2. THEN evolve — which resets children to fitness=0
-  //   3. await submitBest so we NEVER fire concurrent server requests (that blocks the monitor)
   if (evalIndex >= population.length) {
-    await submitBest();   // ← awaited, runs before evolve so real fitness scores are used
+    await submitBest();
     evolve();
     if (generation % SUBMIT_EVERY === 0) await syncTopServerNetworks();
     evalIndex = 0;
 
-    // Update progress bar (population already sorted by evolve)
     const best = population[0];
     const pct  = Math.min(100, Math.max(0, ((best.maxX || 0) - 60) / (W - 60) * 100));
     document.getElementById('progressFill').style.width = pct + '%';
@@ -692,14 +674,12 @@ async function runBatch() {
       `Gen ${generation}: maxX=${Math.floor(best.maxX || 0)}  fitness=${best.fitness.toFixed(0)}` +
       (best.reachedFlag ? '  🏁 FLAG!' : best.alive ? '  ✓alive' : '  ✗died');
   } else {
-    // Show partial progress
     const pct = (evalIndex / population.length) * 100;
     document.getElementById('progressFill').style.width = pct + '%';
     document.getElementById('progressText').textContent =
       `Gen ${generation}: evaluating ${evalIndex}/${population.length}...`;
   }
 
-  // Update stats
   document.getElementById('statSims').textContent = totalSimulations;
 
   const now = performance.now();
@@ -714,16 +694,26 @@ async function runBatch() {
 }
 
 // ── Submit best networks to server ──────────────────────────────────
-// Only submits every SUBMIT_EVERY generations so we don't hammer the server.
 const SUBMIT_EVERY = 10;
 
 async function submitBest() {
-  // Only hit the server every few generations
   if (generation % SUBMIT_EVERY !== 0) return;
 
   population.sort((a, b) => b.fitness - a.fitness);
-  const toSubmit = population.slice(0, CONFIG.batchSize).filter(n => (n.localFitness ?? n.fitness) > 0);
-  if (toSubmit.length === 0) return;
+
+  // FIX: quality gate — only submit networks that have shown real progress.
+  // Threshold of 2000 local fitness requires the network to at least survive
+  // and advance well past the midpoint on several runs.  This prevents the
+  // server backlog from filling with camping/dying networks that waste real-
+  // game evaluation time.
+  const MIN_SUBMIT_FITNESS = 2000;
+  const toSubmit = population.slice(0, CONFIG.batchSize)
+    .filter(n => (n.localFitness ?? n.fitness) > MIN_SUBMIT_FITNESS);
+
+  if (toSubmit.length === 0) {
+    log(`Gen ${generation}: best local fitness ${(population[0].localFitness ?? population[0].fitness).toFixed(0)} below bar (${MIN_SUBMIT_FITNESS}) — not submitting yet`, 'warn');
+    return;
+  }
 
   try {
     const resp = await fetch(serverUrl + '/api/networks', {
@@ -748,7 +738,6 @@ async function submitBest() {
       const r = await resp.json();
       totalSubmitted += r.added;
       document.getElementById('statSubmitted').textContent = totalSubmitted;
-      // Update server best directly from POST response — no extra GET needed
       if (r.bestFitness !== undefined) {
         document.getElementById('statServerBest').textContent = Math.floor(r.bestFitness);
         document.getElementById('status').innerHTML =
@@ -760,7 +749,6 @@ async function submitBest() {
   } catch (e) {
     log(`Submit error: ${e.message}`, 'bad');
   }
-  // ← no testServer() call here — that would fire 2 more requests every submission
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -768,7 +756,6 @@ async function submitBest() {
 // ═══════════════════════════════════════════════════════════════════════
 const serverUrl = window.location.origin;
 
-// Lightweight health check — only /health, one request, safe to call during training
 async function testServer() {
   const statusEl = document.getElementById('status');
   try {
@@ -785,7 +772,6 @@ async function testServer() {
   return false;
 }
 
-// Full fetch — downloads existing networks to seed population. Only called at startup.
 async function fetchServerNetworks() {
   try {
     const r = await fetch(serverUrl + '/api/networks?source=tested&limit=30');
@@ -831,8 +817,6 @@ async function startFastTraining() {
   log('Fetching server networks to seed population...', 'warn');
   const serverNets = await fetchServerNetworks();
 
-  // Warn if the server has networks that might have been trained under old
-  // scoring rules (camping rewarded). User should clear them from monitor.html.
   if (serverNets.length > 0) {
     log(`⚠️  Loaded ${serverNets.length} server networks. If the llama still camps after ` +
         `a few generations, use monitor.html → "Clear All Training" to wipe old data.`, 'warn');
@@ -857,7 +841,6 @@ function stopFastTraining() {
   log('Training stopped.');
 }
 
-// Init — lightweight health check only
 testServer();
 </script>
 </body>
