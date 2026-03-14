@@ -481,7 +481,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/replay', (req, res) => {
-  res.sendFile(path.join(__dirname, 'monitor_replay.html'));
+  res.sendFile(path.join(__dirname, 'replay.html'));
 });
 
 app.use(express.static(__dirname));
