@@ -3554,6 +3554,8 @@ const AI = {
              'https://llamagame-ai-server.wascomb.com',
   online: false,
   submitReady: true,
+  networkAcquireInFlight: false,
+  lastNetworkAcquireMs: 0,
   
   async init(populationSize = 30) {
     this.population = [];
@@ -3684,10 +3686,12 @@ const AI = {
 
         if (data.networks && data.networks.length > 0) {
           console.log(`fetchServerNetworks: fetching ${data.networks.length} networks from server`);
+          const existingIds = new Set(this.population.filter(n => n.id).map(n => n.id));
           
           // Add server networks to population
           for (const netData of data.networks) {
             try {
+              if (netData?.id && existingIds.has(netData.id)) continue;
               if (!this.isCompatibleNetworkShape(netData)) {
                 console.warn(`Skipping incompatible network shape (id: ${netData.id?.substring(0, 8) || 'unknown'})`);
                 continue;
@@ -3708,6 +3712,7 @@ const AI = {
               net.aiEvaluations = netData.aiEvaluations || 0;
 
               this.population.push(net);
+              if (net.id) existingIds.add(net.id);
               console.log(`Added server network with fitness ${netData.fitness.toFixed(0)}, id: ${netData.id?.substring(0,8)}`);
             } catch (e) {
               console.warn(`Failed to add network: ${e.message}`);
@@ -3735,6 +3740,29 @@ const AI = {
     } catch (e) {
       console.error('fetchServerNetworks: failed with error:', e.message);
       console.error('fetchServerNetworks: error stack:', e.stack);
+    }
+  },
+
+  getUntestedServerCandidates() {
+    return this.population
+      .filter(n => n.fromServer && n.producer === 'fast_trainer' && (n.aiEvaluations || 0) === 0)
+      .sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+  },
+
+  async acquireMoreNetworksIfNeeded() {
+    const hasUntested = this.getUntestedServerCandidates().length > 0;
+    if (hasUntested || !this.online || !this.currentUrl || this.networkAcquireInFlight) return;
+
+    const now = Date.now();
+    if (now - this.lastNetworkAcquireMs < 5000) return;
+
+    this.networkAcquireInFlight = true;
+    this.lastNetworkAcquireMs = now;
+    console.log('acquireMoreNetworksIfNeeded: all current fast_trainer networks were tested, fetching more...');
+    try {
+      await this.fetchServerNetworks();
+    } finally {
+      this.networkAcquireInFlight = false;
     }
   },
   
@@ -4230,7 +4258,7 @@ async function startAI() {
   console.log('startAI complete. State:', state, 'Level:', level, 'lvlData:', !!lvlData);
 }
 
-function startGameForAI() {
+async function startGameForAI() {
   // Start from level 1
   level = 1;
   score = 0; lives = 3;
@@ -4247,11 +4275,12 @@ function startGameForAI() {
   
   loadLevel();
   
+  // If all current fast_trainer candidates have been tested, fetch more before selecting.
+  await AI.acquireMoreNetworksIfNeeded();
+
   // Select network: prioritize fast_trainer candidates that still need real-game scoring
   const populationSize = AI.population.length;
-  const pendingEval = AI.population
-    .filter(n => n.fromServer && n.producer === 'fast_trainer')
-    .sort((a, b) => (a.aiEvaluations || 0) - (b.aiEvaluations || 0) || (b.fitness || 0) - (a.fitness || 0));
+  const pendingEval = AI.getUntestedServerCandidates();
 
   if (pendingEval.length > 0) {
     const selectionSize = Math.min(3, pendingEval.length);
