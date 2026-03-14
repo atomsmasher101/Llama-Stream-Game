@@ -11,9 +11,6 @@ const MAX_SUBMIT = 10;
 const MIN_FITNESS = 100;
 const INITIAL_POOL_SIZE = 20;
 
-const FAST_TRAINER_WEIGHT = 0.35;
-const REAL_GAME_WEIGHT = 0.65;
-
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
@@ -26,7 +23,8 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '10mb' }));
 
-let networks = [];
+let testedNetworks = [];
+let untestedNetworks = [];
 
 function isValidNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -53,15 +51,9 @@ function inferMetadata(network) {
 }
 
 function computeCompositeFitness(network) {
-  if (network.producer === 'fast_trainer') {
-    const trainerFitness = isValidNumber(network.trainerFitness) ? network.trainerFitness : network.fitness;
-    const aiScore = isValidNumber(network.aiScore) ? network.aiScore : null;
-    if (aiScore === null) return trainerFitness;
-    return trainerFitness * FAST_TRAINER_WEIGHT + aiScore * REAL_GAME_WEIGHT;
-  }
-
   if (isValidNumber(network.aiScore)) return network.aiScore;
-  return network.fitness;
+  if (network.producer === 'fast_trainer' && isValidNumber(network.trainerFitness)) return network.trainerFitness;
+  return isValidNumber(network.fitness) ? network.fitness : 0;
 }
 
 function normalizeNetwork(net) {
@@ -108,16 +100,42 @@ function isValidNetworkObject(net) {
   return true;
 }
 
-function sortAndTrim() {
-  networks.sort((a, b) => b.fitness - a.fitness);
-  if (networks.length > MAX_NETWORKS) networks = networks.slice(0, MAX_NETWORKS);
+function sortCollections() {
+  testedNetworks.sort((a, b) => {
+    const aScore = isValidNumber(a.aiScore) ? a.aiScore : a.fitness;
+    const bScore = isValidNumber(b.aiScore) ? b.aiScore : b.fitness;
+    return bScore - aScore;
+  });
+
+  untestedNetworks.sort((a, b) => {
+    const aScore = isValidNumber(a.trainerFitness) ? a.trainerFitness : a.fitness;
+    const bScore = isValidNumber(b.trainerFitness) ? b.trainerFitness : b.fitness;
+    return bScore - aScore;
+  });
 }
 
 function saveNetworks() {
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(networks, null, 2));
+    const payload = {
+      testedNetworks,
+      untestedNetworks,
+    };
+    fs.writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2));
   } catch (err) {
     console.error('Error saving networks:', err.message);
+  }
+}
+
+function splitAndNormalizeNetworks(items) {
+  for (const rawNet of items) {
+    if (!isValidNetworkObject(rawNet)) continue;
+
+    const net = normalizeNetwork(rawNet);
+    if (isValidNumber(net.aiScore) || net.producer === 'ai') {
+      testedNetworks.push(net);
+    } else {
+      untestedNetworks.push(net);
+    }
   }
 }
 
@@ -126,24 +144,70 @@ function loadNetworks() {
     if (!fs.existsSync(DATA_FILE)) return;
 
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    networks = parsed
-      .filter((net) => isValidNetworkObject(net))
-      .map((net) => normalizeNetwork(net));
+    testedNetworks = [];
+    untestedNetworks = [];
 
-    sortAndTrim();
-    console.log(`Loaded ${networks.length} networks from disk`);
+    if (Array.isArray(parsed)) {
+      splitAndNormalizeNetworks(parsed);
+    } else {
+      splitAndNormalizeNetworks(parsed.testedNetworks || []);
+      splitAndNormalizeNetworks(parsed.untestedNetworks || []);
+    }
+
+    sortCollections();
+    if (testedNetworks.length > MAX_NETWORKS) {
+      testedNetworks = testedNetworks.slice(0, MAX_NETWORKS);
+    }
+    console.log(`Loaded ${testedNetworks.length} tested + ${untestedNetworks.length} untested networks from disk`);
   } catch (err) {
     console.error('Error loading networks:', err.message);
-    networks = [];
+    testedNetworks = [];
+    untestedNetworks = [];
   }
 }
 
-function addNetwork(network) {
+function addUntestedNetwork(network) {
   const added = normalizeNetwork(network);
-  networks.push(added);
-  sortAndTrim();
+  untestedNetworks.push(added);
+  sortCollections();
   saveNetworks();
   return added;
+}
+
+function addBattleTestedNetwork(network) {
+  const added = normalizeNetwork(network);
+
+  if (testedNetworks.length < MAX_NETWORKS) {
+    testedNetworks.push(added);
+    sortCollections();
+    saveNetworks();
+    return { added: true, network: added };
+  }
+
+  sortCollections();
+  const weakest = testedNetworks[testedNetworks.length - 1];
+  const addedScore = isValidNumber(added.aiScore) ? added.aiScore : added.fitness;
+  const weakestScore = isValidNumber(weakest?.aiScore) ? weakest.aiScore : weakest?.fitness;
+
+  if (!weakest || addedScore > weakestScore) {
+    testedNetworks.push(added);
+    sortCollections();
+    testedNetworks = testedNetworks.slice(0, MAX_NETWORKS);
+    saveNetworks();
+    return { added: true, network: added };
+  }
+
+  return { added: false, network: added, reason: 'Outside top battle-tested 100' };
+}
+
+function findNetworkById(id) {
+  const testedIndex = testedNetworks.findIndex((n) => n.id === id);
+  if (testedIndex !== -1) return { collection: 'tested', index: testedIndex, network: testedNetworks[testedIndex] };
+
+  const untestedIndex = untestedNetworks.findIndex((n) => n.id === id);
+  if (untestedIndex !== -1) return { collection: 'untested', index: untestedIndex, network: untestedNetworks[untestedIndex] };
+
+  return null;
 }
 
 function serializeNetwork(n) {
@@ -167,10 +231,13 @@ function serializeNetwork(n) {
 }
 
 app.get('/health', (req, res) => {
+  sortCollections();
   res.json({
     status: 'ok',
-    networks: networks.length,
-    bestFitness: networks.length > 0 ? networks[0].fitness : 0,
+    networks: testedNetworks.length + untestedNetworks.length,
+    testedNetworks: testedNetworks.length,
+    untestedNetworks: untestedNetworks.length,
+    bestFitness: testedNetworks.length > 0 ? testedNetworks[0].fitness : 0,
     uptime: process.uptime()
   });
 });
@@ -178,8 +245,14 @@ app.get('/health', (req, res) => {
 app.get('/api/networks', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
   const producer = req.query.producer;
+  const source = req.query.source || 'tested';
 
-  let selected = networks;
+  sortCollections();
+
+  let selected = source === 'untested'
+    ? untestedNetworks
+    : (source === 'all' ? [...testedNetworks, ...untestedNetworks] : testedNetworks);
+
   if (producer) selected = selected.filter((n) => n.producer === producer);
 
   const topNetworks = selected.slice(0, limit).map(serializeNetwork);
@@ -189,7 +262,7 @@ app.get('/api/networks', (req, res) => {
 app.get('/api/evaluations/pending', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
 
-  const pending = [...networks]
+  const pending = [...untestedNetworks]
     .filter((n) => n.producer === 'fast_trainer')
     .sort((a, b) => {
       if ((a.aiEvaluations || 0) !== (b.aiEvaluations || 0)) return (a.aiEvaluations || 0) - (b.aiEvaluations || 0);
@@ -202,17 +275,20 @@ app.get('/api/evaluations/pending', (req, res) => {
 });
 
 app.delete('/api/networks/clear', (req, res) => {
-  const count = networks.length;
-  networks = [];
+  const count = testedNetworks.length + untestedNetworks.length;
+  testedNetworks = [];
+  untestedNetworks = [];
   saveNetworks();
   res.json({ success: true, message: `Cleared ${count} networks`, deletedCount: count });
 });
 
 app.delete('/api/networks/:id', (req, res) => {
-  const index = networks.findIndex((n) => n.id === req.params.id);
-  if (index === -1) return res.status(404).json({ error: 'Network not found' });
+  const found = findNetworkById(req.params.id);
+  if (!found) return res.status(404).json({ error: 'Network not found' });
 
-  const deleted = networks.splice(index, 1)[0];
+  const deleted = found.collection === 'tested'
+    ? testedNetworks.splice(found.index, 1)[0]
+    : untestedNetworks.splice(found.index, 1)[0];
   saveNetworks();
   res.json({ success: true, message: 'Network deleted', deletedId: deleted.id });
 });
@@ -243,19 +319,27 @@ app.post('/api/networks', (req, res) => {
       continue;
     }
 
-    const highQualityCount = networks.filter((n) => n.fitness >= MIN_FITNESS).length;
+    const highQualityCount = [...testedNetworks, ...untestedNetworks].filter((n) => n.fitness >= MIN_FITNESS).length;
     const needsMoreData = highQualityCount < INITIAL_POOL_SIZE;
     if (!needsMoreData && net.fitness < MIN_FITNESS) {
       rejected.push({ error: 'Fitness too low', fitness: net.fitness });
       continue;
     }
 
-    if (net.id && networks.some((n) => n.id === net.id)) {
+    if (net.id && findNetworkById(net.id)) {
       rejected.push({ error: 'Duplicate network ID', id: net.id });
       continue;
     }
 
-    added.push(addNetwork(net));
+    const producer = inferMetadata(net).producer;
+    if (isValidNumber(net.aiScore) || producer === 'ai') {
+      const result = addBattleTestedNetwork(net);
+      if (result.added) added.push(result.network);
+      else rejected.push({ error: result.reason, id: result.network.id, aiScore: result.network.aiScore });
+      continue;
+    }
+
+    added.push(addUntestedNetwork(net));
   }
 
   console.log(`Submitted: ${added.length} added, ${rejected.length} rejected`);
@@ -263,14 +347,16 @@ app.post('/api/networks', (req, res) => {
   res.json({
     added: added.length,
     rejected: rejected.length,
-    bestFitness: networks.length > 0 ? networks[0].fitness : 0,
+    bestFitness: testedNetworks.length > 0 ? testedNetworks[0].fitness : 0,
     addedNetworks: added.map((n) => ({ id: n.id, fitness: n.fitness, aiEvaluations: n.aiEvaluations || 0 }))
   });
 });
 
 app.post('/api/networks/:id/score', (req, res) => {
-  const network = networks.find((n) => n.id === req.params.id);
-  if (!network) return res.status(404).json({ error: 'Network not found' });
+  const found = findNetworkById(req.params.id);
+  if (!found) return res.status(404).json({ error: 'Network not found' });
+
+  const network = found.network;
 
   const score = req.body?.score;
   if (!isValidNumber(score)) return res.status(400).json({ error: 'Invalid score' });
@@ -292,7 +378,29 @@ app.post('/api/networks/:id/score', (req, res) => {
     network.trainingStats.realGameScore = network.aiScore;
   }
 
-  sortAndTrim();
+  let promoted = false;
+  if (found.collection === 'untested') {
+    untestedNetworks.splice(found.index, 1);
+    const result = addBattleTestedNetwork(network);
+    promoted = result.added;
+    if (!promoted) {
+      saveNetworks();
+      return res.json({
+        success: true,
+        id: network.id,
+        aiScore: network.aiScore,
+        aiEvaluations: network.aiEvaluations,
+        fitness: network.fitness,
+        promoted: false,
+        reason: result.reason,
+      });
+    }
+  } else {
+    sortCollections();
+    if (testedNetworks.length > MAX_NETWORKS) testedNetworks = testedNetworks.slice(0, MAX_NETWORKS);
+    promoted = true;
+  }
+
   saveNetworks();
 
   res.json({
@@ -301,13 +409,16 @@ app.post('/api/networks/:id/score', (req, res) => {
     aiScore: network.aiScore,
     aiEvaluations: network.aiEvaluations,
     fitness: network.fitness,
+    promoted,
   });
 });
 
 app.get('/api/stats', (req, res) => {
-  const fastTrainerNetworks = networks.filter((n) => n.producer === 'fast_trainer');
-  const aiNetworks = networks.filter((n) => n.producer === 'ai');
-  const unknownNetworks = networks.filter((n) => !n.producer || n.producer === 'unknown');
+  sortCollections();
+  const allNetworks = [...testedNetworks, ...untestedNetworks];
+  const fastTrainerNetworks = allNetworks.filter((n) => n.producer === 'fast_trainer');
+  const aiNetworks = allNetworks.filter((n) => n.producer === 'ai');
+  const unknownNetworks = allNetworks.filter((n) => !n.producer || n.producer === 'unknown');
 
   const fastTrainerEvaluated = fastTrainerNetworks.filter((n) => (n.aiEvaluations || 0) > 0);
   const pendingFastTrainer = fastTrainerNetworks.length - fastTrainerEvaluated.length;
@@ -324,9 +435,11 @@ app.get('/api/stats', (req, res) => {
   }
 
   res.json({
-    totalNetworks: networks.length,
-    bestFitness: networks.length > 0 ? networks[0].fitness : 0,
-    averageFitness: networks.length > 0 ? networks.reduce((sum, n) => sum + n.fitness, 0) / networks.length : 0,
+    testedNetworks: testedNetworks.length,
+    untestedNetworks: untestedNetworks.length,
+    totalNetworks: allNetworks.length,
+    bestFitness: testedNetworks.length > 0 ? testedNetworks[0].fitness : 0,
+    averageFitness: testedNetworks.length > 0 ? testedNetworks.reduce((sum, n) => sum + n.fitness, 0) / testedNetworks.length : 0,
     evaluatedFastTrainer: fastTrainerEvaluated.length,
     pendingFastTrainer,
     battleTestingProgress,
@@ -379,7 +492,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(50));
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Access from other computers: http://<YOUR-IP>:${PORT}`);
-  console.log(`Loaded ${networks.length} networks`);
+  console.log(`Loaded ${testedNetworks.length} tested + ${untestedNetworks.length} untested networks`);
   console.log('='.repeat(50));
 });
 
