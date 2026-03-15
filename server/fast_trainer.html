@@ -500,44 +500,48 @@ function simulateNetwork(network, levelNum = 1) {
   //     outscore an equivalent alive agent.
   // ════════════════════════════════════════════════════════════════════
 
-  const progressReward = (maxX - startX) * 2.5;
+  // ════════════════════════════════════════════════════════════════════
+  //  SCORING  — Alignment with ai.html
+  // ════════════════════════════════════════════════════════════════════
+  const dxF = x - level.flag.x;
+  const dyF = y - (level.flag.y + 45);
+  const distToFlag = Math.sqrt(dxF*dxF + dyF*dyF);
+  
+  // Proximity reward: Reward distance to flag much more heavily than farming
+  const proximityReward = (1.0 - Math.min(1, distToFlag / W)) * 5000;
+  
   const enemyBonus     = enemiesKilled * 450;
   const coinBonus      = coinsCollected * 350;
   const scoreBonus     = score;
 
   const enemyClearRatio = totalEnemies > 0 ? (enemiesKilled / totalEnemies) : 1;
   const coinClearRatio  = totalCoins   > 0 ? (coinsCollected / totalCoins)  : 1;
-  const clearQualityBonus = reachedFlag
-    ? (enemyClearRatio + coinClearRatio) * 2400
-    : (enemyClearRatio + coinClearRatio) * 300;
-  const fullClear = reachedFlag && enemiesKilled === totalEnemies && coinsCollected === totalCoins;
+  
+  // COMPLETION GATING: If you reach the flag, you get a massive multiplier.
+  // This makes farming points and dying strictly worse than actually winning.
+  const completionMultiplier = reachedFlag ? 5.0 : 1.0;
 
-  const survivalMult = alive ? 1.0 : 0.05;
-
-  const runReward = (progressReward + enemyBonus + coinBonus + scoreBonus) * survivalMult;
-
-  const flagBonus      = reachedFlag ? 7000 : 0;
+  const flagBonus      = reachedFlag ? 15000 : 0;
+  const fullClear      = reachedFlag && enemiesKilled === totalEnemies && coinsCollected === totalCoins;
   const fullClearBonus = fullClear   ? 10000 : 0;
   const efficiencyBonus = reachedFlag ? Math.max(0, (MAX_FRAMES - frames) * 0.8) : 0;
-  const incompleteClearPenalty = reachedFlag && !fullClear ? 5000 : 0;
 
-  // FIX: exponential stagnation penalty.  Camping for 60+ frames is increasingly
-  // catastrophic; the first 60 frames are cheap to allow legitimate backtracking.
+  // Stagnation penalty
   const stagnationPenalty = totalStagnantFrames < 60
     ? totalStagnantFrames * 4
     : 240 + Math.pow(totalStagnantFrames - 60, 1.6) * 2;
 
   const timePenalty        = frames * 0.3;
-  const earlyDeathPenalty  = !alive && frames < 240 ? 12000 : 0;
-  const deathPenalty       = !alive ? 8000 : 0;
+  
+  // Progress-scaled death penalty: dying near the flag is "forgiven"
+  const progressFactor = x / W;
+  const deathPenalty = !alive ? (12000 * (1.0 - progressFactor)) : 0;
 
-  let fitness = runReward + clearQualityBonus + flagBonus + fullClearBonus + efficiencyBonus
-              - stagnationPenalty - timePenalty - incompleteClearPenalty
-              - deathPenalty - earlyDeathPenalty;
+  let fitness = ( (proximityReward + enemyBonus + coinBonus + scoreBonus) * completionMultiplier )
+              + flagBonus + fullClearBonus + efficiencyBonus
+              - stagnationPenalty - timePenalty - deathPenalty;
 
-  // FIX: only cap runs that barely moved — preserve the gradient for near-flag
-  // survivors so evolution knows "dying at x=700 is better than dying at x=100".
-  if (!reachedFlag && maxX < startX + 100) fitness = Math.min(fitness, 500);
+  if (!reachedFlag && maxX < startX + 50) fitness = Math.min(fitness, 500);
 
   return { fitness, score, coinsCollected, enemiesKilled, maxX, frames, alive, reachedFlag, fullClear };
 }
@@ -547,9 +551,12 @@ function simulateNetwork(network, levelNum = 1) {
 // ═══════════════════════════════════════════════════════════════════════
 function evaluateNetwork(network) {
   const runs = [1, 2, 1, 2, 1].map(levelNum => simulateNetwork(network, levelNum));
-  const fullClears   = runs.filter(r => r.fullClear).length;
   const levelsCleared = runs.filter(r => r.reachedFlag).length;
-  const campaignBonus = (levelsCleared * 16000) + (fullClears * 12000);
+  const fullClears   = runs.filter(r => r.fullClear).length;
+  
+  // Campaign Multiplier: clearing multiple levels boosts the total score exponentially
+  const campaignMult = 1.0 + (levelsCleared * 0.5);
+  const campaignBonus = (levelsCleared * 20000) + (fullClears * 15000);
 
   const weightedFitness =
     (runs[0].fitness * 1.0) +
@@ -559,7 +566,7 @@ function evaluateNetwork(network) {
     (runs[4].fitness * 1.4);
 
   return {
-    fitness:        (weightedFitness / 6) + campaignBonus,
+    fitness:        (weightedFitness * campaignMult) + campaignBonus,
     reachedFlag:    levelsCleared >= 5,
     enemiesKilled:  runs.reduce((sum, r) => sum + r.enemiesKilled, 0),
     coinsCollected: runs.reduce((sum, r) => sum + r.coinsCollected, 0),
@@ -738,23 +745,25 @@ async function runBatch() {
 
 // ── Submit best networks to server ──────────────────────────────────
 const SUBMIT_EVERY = 10;
+let lastServerSubmitTime = 0; // Throttle for Cloudflare
 
 async function submitBest() {
   if (generation % SUBMIT_EVERY !== 0) return;
+  
+  // Rate limit: Only allow one submission every 60 seconds across all trainers
+  const now = Date.now();
+  if (now - lastServerSubmitTime < 60000) return;
+  lastServerSubmitTime = now;
 
   population.sort((a, b) => b.fitness - a.fitness);
 
-  // FIX: quality gate — only submit networks that have shown real progress.
-  // Threshold of 2000 local fitness requires the network to at least survive
-  // and advance well past the midpoint on several runs.  This prevents the
-  // server backlog from filling with camping/dying networks that waste real-
-  // game evaluation time.
-  const MIN_SUBMIT_FITNESS = 2000;
+  // FIX: quality gate — only submit networks that have actually CLEARED a level.
+  // This completely eliminates "farming and dying" submissions.
   const toSubmit = population.slice(0, CONFIG.batchSize)
-    .filter(n => (n.localFitness ?? n.fitness) > MIN_SUBMIT_FITNESS);
+    .filter(n => (n.levelsCleared || 0) > 0);
 
   if (toSubmit.length === 0) {
-    log(`Gen ${generation}: best local fitness ${(population[0].localFitness ?? population[0].fitness).toFixed(0)} below bar (${MIN_SUBMIT_FITNESS}) — not submitting yet`, 'warn');
+    log(`Gen ${generation}: No level clears found — skipping server submission`, 'warn');
     return;
   }
 

@@ -452,28 +452,30 @@ const AI={
   inputSize:52,hiddenSize:48,outputSize:6,
   serverUrl:(new URLSearchParams(window.location.search).get('server'))||'https://llamagame-ai-server.wascomb.com',
   online:false,submitReady:true,networkAcquireInFlight:false,lastNetworkAcquireMs:0,
+  lastServerFetchTime:0, // Throttling for Cloudflare limits
 
   async init(populationSize=30){
     this.population=[];
     const initialRandomCount=10;
     for(let i=0;i<initialRandomCount;i++)this.population.push(new NeuralNetwork(this.inputSize,this.hiddenSize,this.outputSize));
     this.generation=0;this.active=true;
-    console.log('init: checking server for networks...');
-    const connected=await this.checkServer();
-    console.log('init: server check complete, connected:',connected);
+    await this.checkServer();
     while(this.population.length<populationSize)this.population.push(new NeuralNetwork(this.inputSize,this.hiddenSize,this.outputSize));
     this.population.sort((a,b)=>(b.fitness||0)-(a.fitness||0));
-    console.log(`init: final population size: ${this.population.length}`);
-    return connected;
+    return this.online;
   },
 
   async checkServer(){
-    console.log('checkServer: attempting to connect to',this.serverUrl);
-    try{const resp=await fetch(this.serverUrl+'/health',{cache:'no-store'});if(resp.ok){const data=await resp.json();this.online=true;this.currentUrl=this.serverUrl;await this.fetchServerNetworks();return true;}}catch(e){console.error('checkServer: server unreachable:',e.message);}
+    // Only allow server checks/fetches every 3 minutes to stay under Cloudflare limits
+    const now = Date.now();
+    if (this.lastServerFetchTime > 0 && now - this.lastServerFetchTime < 180000) return this.online;
+    this.lastServerFetchTime = now;
+
+    try{const resp=await fetch(this.serverUrl+'/health',{cache:'no-store'});if(resp.ok){this.online=true;this.currentUrl=this.serverUrl;await this.fetchServerNetworks();return true;}}catch(e){console.error('checkServer: unreachable');}
     this.online=false;return false;
   },
 
-  async reconnect(){const connected=await this.checkServer();if(connected)console.log('Reconnected!');else console.log('Could not reconnect');},
+  async reconnect(){const connected=await this.checkServer();},
 
   isCompatibleNetworkShape(netData){const ew1=this.inputSize*this.hiddenSize,ew2=this.hiddenSize*this.outputSize,eb1=this.hiddenSize,eb2=this.outputSize;return Array.isArray(netData?.w1)&&netData.w1.length===ew1&&Array.isArray(netData?.w2)&&netData.w2.length===ew2&&Array.isArray(netData?.b1)&&netData.b1.length===eb1&&Array.isArray(netData?.b2)&&netData.b2.length===eb2;},
 
@@ -483,8 +485,8 @@ const AI={
     try{
       const resp=await fetch(url,{cache:'no-store'});
       if(resp.ok){
-        const responseText=await resp.text();let data;try{data=JSON.parse(responseText);}catch(parseError){console.error('fetchServerNetworks: JSON parse failed');throw parseError;}
-        try{const pendingResp=await fetch(this.currentUrl+'/api/evaluations/pending?limit=10',{cache:'no-store'});if(pendingResp.ok){const pendingData=await pendingResp.json();if(Array.isArray(pendingData.networks)&&pendingData.networks.length>0){const knownIds=new Set((data.networks||[]).map(n=>n.id));for(const n of pendingData.networks){if(!knownIds.has(n.id))data.networks.push(n);};}}}catch(e){console.log('fetchServerNetworks: pending eval fetch failed:',e.message);}
+        const data=await resp.json();
+        try{const pendingResp=await fetch(this.currentUrl+'/api/evaluations/pending?limit=10',{cache:'no-store'});if(pendingResp.ok){const pendingData=await pendingResp.json();if(Array.isArray(pendingData.networks)&&pendingData.networks.length>0){const knownIds=new Set((data.networks||[]).map(n=>n.id));for(const n of pendingData.networks){if(!knownIds.has(n.id))data.networks.push(n);};}}}catch(e){}
         if(data.networks&&data.networks.length>0){
           const existingIds=new Set(this.population.filter(n=>n.id).map(n=>n.id));
           for(const netData of data.networks){
@@ -493,43 +495,41 @@ const AI={
               if(!this.isCompatibleNetworkShape(netData))continue;
               const net=new NeuralNetwork(this.inputSize,this.hiddenSize,this.outputSize);
               net.w1.set(netData.w1);net.w2.set(netData.w2);net.b1.set(netData.b1);net.b2.set(netData.b2);
-              
               net.aiEvaluations = netData.aiEvaluations || 0;
               net.serverFitness = netData.fitness;
-              // CRITICAL: Protect verified winners. Discount unverified "Simulation Experts" so they don't purge the pool.
               net.fitness = (net.aiEvaluations > 0) ? netData.fitness : Math.min(500, netData.fitness);
-              
               net.fromServer=true;
               net.id=netData.id;
               net.actionProfile=netData.actionProfile||"full6";
               net.producer=netData.producer||(net.actionProfile==='movement3'?'fast_trainer':'ai');
-              net.trainingStats=netData.trainingStats||null;
-              net.aiScore=typeof netData.aiScore==='number'?netData.aiScore:null;
               this.population.push(net);
               if(net.id)existingIds.add(net.id);
-            }catch(e){console.warn('Failed to add network:',e.message);}
+            }catch(e){}
           }
           this.population.sort((a,b)=>(b.fitness||0)-(a.fitness||0));
           if(this.population.length>60)this.population=this.population.slice(0,60);
         }
       }
-    }catch(e){console.error('fetchServerNetworks: failed:',e.message);}
+    }catch(e){}
   },
 
   getUntestedServerCandidates(){return this.population.filter(n=>n.fromServer&&n.producer==='fast_trainer'&&(n.aiEvaluations||0)===0).sort((a,b)=>(b.fitness||0)-(a.fitness||0));},
 
   async acquireMoreNetworksIfNeeded(){
-    const hasUntested=this.getUntestedServerCandidates().length>0;
-    if(hasUntested||!this.online||!this.currentUrl||this.networkAcquireInFlight)return;
+    if(!this.online||!this.currentUrl||this.networkAcquireInFlight)return;
     if(this.getUntestedServerCandidates().length>8)return;
-    const now=Date.now();if(now-this.lastNetworkAcquireMs<5000)return;
+    const now=Date.now();
+    if(now-this.lastNetworkAcquireMs<180000)return; // 3 min throttle
     this.networkAcquireInFlight=true;this.lastNetworkAcquireMs=now;
     try{await this.fetchServerNetworks();}finally{this.networkAcquireInFlight=false;}
   },
 
   async submitEvaluation(network){
     if(!network?.id||network?.producer!=='fast_trainer')return;
-    const url=this.currentUrl||this.serverUrl||'http://localhost:3000';
+    // Only submit if we actually cleared a level or made it really far, to save requests
+    if((network.levelsCompleted||0)===0 && (llama?llama.x:0) < 600) return;
+
+    const url=this.currentUrl||this.serverUrl;
     try{
       const finalScore = network.currentRunFitness || network.fitness;
       const resp=await fetch(`${url}/api/networks/${network.id}/score`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({score:finalScore,scorer:'ai.html',levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0})});
@@ -538,18 +538,19 @@ const AI={
         network.aiEvaluations=data.aiEvaluations||(network.aiEvaluations||0)+1;
         network.fitness = data.fitness;
       }
-    }catch(e){console.log('submitEvaluation: failed',e.message);}
+    }catch(e){}
   },
 
   async submitNetwork(network){
-    const url=this.currentUrl||this.serverUrl||'http://localhost:3000';
-    if(!network||(network.currentRunFitness||network.fitness||0)<100)return;
-    if(network.hiddenSize!==this.hiddenSize||network.w1.length!==this.inputSize*this.hiddenSize||network.w2.length!==this.hiddenSize*this.outputSize||network.b1.length!==this.hiddenSize||network.b2.length!==this.outputSize)return;
+    const url=this.currentUrl||this.serverUrl;
+    // Massive gate: only submit if they finished level 1
+    if(!network||(network.levelsCompleted||0)===0)return;
     if(!this.submitReady)return;
-    this.submitReady=false;setTimeout(()=>{this.submitReady=true;},10000);
+    this.submitReady=false;setTimeout(()=>{this.submitReady=true;},60000); // 60s throttle
     try{
       const finalFitness = network.currentRunFitness || network.fitness;
-      const resp=await fetch(url+'/api/networks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({networks:[{id:network.id||undefined,fitness:finalFitness,hiddenSize:this.hiddenSize,w1:Array.from(network.w1),w2:Array.from(network.w2),b1:Array.from(network.b1),b2:Array.from(network.b2),producer:"ai",actionProfile:"full6",trainingStats:{levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0}}]})});if(resp.ok){const data=JSON.parse(await resp.text());console.log(`submitNetwork: Added: ${data.added}, Best: ${data.bestFitness}`);}}catch(e){console.error('submitNetwork: failed:',e.message);}
+      const resp=await fetch(url+'/api/networks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({networks:[{id:network.id||undefined,fitness:finalFitness,hiddenSize:this.hiddenSize,w1:Array.from(network.w1),w2:Array.from(network.w2),b1:Array.from(network.b1),b2:Array.from(network.b2),producer:"ai",actionProfile:"full6",trainingStats:{levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0}}]})});
+    }catch(e){}
   },
 
   getGameState(){
@@ -558,8 +559,8 @@ const AI={
     let idx=0;
     inputs[idx++]=llama.x/W;
     inputs[idx++]=(W-llama.x-llama.w)/W;
-    inputs[idx++]=llama.y/H; // Replaced duplicate llama.x/W with llama.y/H for better vertical awareness
-    inputs[idx++]=llama.y/H; // Keep for compatibility if needed, though index 3 is also llama.y/H
+    inputs[idx++]=llama.y/H;
+    inputs[idx++]=llama.y/H;
     inputs[idx++]=(llama.vx+5)/10;
     inputs[idx++]=(llama.vy+15)/30;
     inputs[idx++]=llama.onGround?1:0;
@@ -567,12 +568,8 @@ const AI={
     inputs[idx++]=llama.gunAmmo/9;
     inputs[idx++]=llama.squashiePower>0?1:0;
     inputs[idx++]=llama.gingerWig>0?1:0;
-    
-    // FIX: Provide RELATIVE coordinates to the flag. 
-    // Absolute coordinates are hard for the AI to use for navigation.
-    inputs[idx++]=(lvlData.flag.x - llama.x)/W; 
+    inputs[idx++]=(lvlData.flag.x - llama.x)/W;
     inputs[idx++]=(lvlData.flag.y - llama.y)/H;
-    
     inputs[idx++]=bombTimer/TIMER_START;
     const sortedPlats=lvlData.platforms.slice().sort((a,b)=>Math.abs((a.x+a.w/2)-llama.x)-Math.abs((b.x+b.w/2)-llama.x));
     for(let i=0;i<8;i++){
@@ -609,7 +606,6 @@ const AI={
 
   evolve(){
     this.population.sort((a,b)=>b.fitness-a.fitness);const best=this.population[0];
-    console.log(`Gen ${this.generation}: Best fitness = ${best.fitness.toFixed(0)}`);
     const newPop=[best.clone(),this.population[1].clone()];let explorersCreated=0;const explorationRate=0.15;
     while(newPop.length<this.population.length){
       const parentA=this.population[Math.floor(Math.random()*this.population.length/2)];const parentB=this.population[Math.floor(Math.random()*this.population.length/2)];
@@ -634,27 +630,45 @@ const AI={
     if(!network.alive)return;
     network.frames++;
     if(llama){const currentX=llama.x;const movedSignificantly=Math.abs(currentX-network.lastX)>10;if(movedSignificantly){network.stagnationFrames=0;network.lastX=currentX;}else{network.stagnationFrames++;network.maxStagnation=Math.max(network.maxStagnation,network.stagnationFrames);}}
-    const levelBonus=network.levelsCompleted*12000;const scoreBonus=score*3;
+
+    // COMPLETION GATING: If you haven't finished a level, your score is strictly limited.
+    // This stops "farming and dying" because farming is only worth 1.0x, but finishing is worth a 5.0x multiplier.
+    const isWinner = network.levelsCompleted > 0;
+    const completionMultiplier = isWinner ? 5.0 : 1.0;
+
+    const levelBonus=network.levelsCompleted*15000;
+    const scoreBonus=score*3;
     let enemyBonus=0;for(const e of lvlData?.enemies||[]){if(e.dead&&e.deadTimer===30&&!e.scored){e.scored=true;if(e.type==='jimmy')enemyBonus+=800;else if(e.type==='volanradooga')enemyBonus+=400;else if(e.type==='ginger')enemyBonus+=300;else enemyBonus+=200;}}
     let collectibleBonus=0;for(const c of lvlData?.coins||[])if(c.collected&&!c.scored){c.scored=true;collectibleBonus+=150;}for(const s of lvlData?.squashies||[])if(s.collected&&!s.scored){s.scored=true;collectibleBonus+=400;}for(const g of lvlData?.guns||[])if(g.collected&&!g.scored){g.scored=true;collectibleBonus+=300;}for(const b of lvlData?.gingerBabies||[])if(b.collected&&!b.scored){b.scored=true;collectibleBonus+=500;}for(const p of lvlData?.bigPots||[])if(p.collected&&!p.scored){p.scored=true;collectibleBonus+=750;}
+
     let progressBonus=0;
     if(llama && lvlData){
       const dx = llama.x - lvlData.flag.x;
-      const dy = llama.y - (lvlData.flag.y + 45); // Target middle of flag
+      const dy = llama.y - (lvlData.flag.y + 45);
       const distToFlag = Math.sqrt(dx*dx + dy*dy);
-      progressBonus = (1.0 - Math.min(1, distToFlag / W)) * 3000;
+      // Reward distance to flag much more heavily than farming
+      progressBonus = (1.0 - Math.min(1, distToFlag / W)) * 5000;
     }
-    const totalEnemies=(lvlData?.enemies||[]).length;const deadEnemies=(lvlData?.enemies||[]).filter(e=>e.dead).length;const enemyClearRatio=totalEnemies>0?(deadEnemies/totalEnemies):1;
-    const levelCollectibles=[...(lvlData?.coins||[]),...(lvlData?.squashies||[]),...(lvlData?.guns||[]),...(lvlData?.gingerBabies||[]),...(lvlData?.bigPots||[])];const collectedItems=levelCollectibles.filter(item=>item.collected).length;const collectibleClearRatio=levelCollectibles.length>0?(collectedItems/levelCollectibles.length):1;const clearQualityBonus=(enemyClearRatio+collectibleClearRatio)*900;
-    const movementBonus=llama?Math.abs(llama.vx)*2:0;if(network.jimmyKilled)progressBonus+=2000;if(network.allCoins)progressBonus+=1000;
-    const fullClearBonus=(network.levelFullClears||0)*5000;const noLevelProgressPenalty=network.levelsCompleted===0?1500:0;const survivalBonus=Math.min(network.frames*0.1,100);const deathPenalty=network.deaths*4500;
-    const stagnationPenalty=network.stagnationFrames*5;const timeoutPenalty=(network.timeoutDeaths||0)*2500;const timePenalty=Math.max(0,(network.frames-240)*1.2);
-    let explorerBonus=0;if(network.isExplorer)explorerBonus=Math.max(0,(llama?llama.x:0)-200)*2;
-    let rawFitness=network.bonusFitness+levelBonus+fullClearBonus+clearQualityBonus+scoreBonus+enemyBonus+collectibleBonus+progressBonus+movementBonus+survivalBonus+explorerBonus-deathPenalty-stagnationPenalty-timeoutPenalty-timePenalty-noLevelProgressPenalty;
-    if(network.levelsCompleted===0)rawFitness=Math.max(-1000,Math.min(rawFitness,1500));
+
+    const fullClearBonus=(network.levelFullClears||0)*8000;
+    const survivalBonus=Math.min(network.frames*0.1,100);
+
+    // SCALE DEATH PENALTY: Dying is okay if you were close to the flag. 
+    // Dying at the start is a massive penalty.
+    const progressFactor = llama ? (llama.x / W) : 0;
+    const deathPenalty = network.deaths * (10000 * (1.0 - progressFactor));
+
+    const stagnationPenalty=network.stagnationFrames*8;
+    const timeoutPenalty=(network.timeoutDeaths||0)*5000;
+    const timePenalty=Math.max(0,(network.frames-300)*1.5);
+
+    let rawFitness = network.bonusFitness + levelBonus + fullClearBonus + 
+                     ((scoreBonus + enemyBonus + collectibleBonus + progressBonus) * completionMultiplier) + 
+                     survivalBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty;
+
     network.currentRunFitness=rawFitness;network.score=score;network.collectiblesCollected=collectibleBonus;
   }
-};
+  };
 
 let currentNetwork=null,aiFrames=0,aiScore=0;
 
