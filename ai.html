@@ -450,29 +450,60 @@ class NeuralNetwork{
 const AI={
   population:[],bestNetwork:null,generation:0,active:false,pausedForAI:false,
   inputSize:52,hiddenSize:48,outputSize:6,
-  serverUrl:(new URLSearchParams(window.location.search).get('server'))||'https://llamagame-ai-server.wascomb.com',
+  serverUrl: (function() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('server')) return params.get('server');
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return window.location.origin;
+    }
+    return 'http://localhost:3000'; // Default to local
+  })(),
+  remoteUrl: 'https://llamagame-ai-server.wascomb.com',
   online:false,submitReady:true,networkAcquireInFlight:false,lastNetworkAcquireMs:0,
-  lastServerFetchTime:0, // Throttling for Cloudflare limits
+  lastServerFetchTime:0,
 
   async init(populationSize=30){
     this.population=[];
     const initialRandomCount=10;
     for(let i=0;i<initialRandomCount;i++)this.population.push(new NeuralNetwork(this.inputSize,this.hiddenSize,this.outputSize));
     this.generation=0;this.active=true;
-    await this.checkServer();
+    
+    // Attempt local discovery
+    console.log('init: searching for local AI server...');
+    let connected = await this.checkServer(this.serverUrl);
+    
+    // Fallback to remote only if local fails and we aren't already on localhost
+    if (!connected && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        console.log('init: local server not found, trying remote...');
+        connected = await this.checkServer(this.remoteUrl);
+    }
+    
     while(this.population.length<populationSize)this.population.push(new NeuralNetwork(this.inputSize,this.hiddenSize,this.outputSize));
     this.population.sort((a,b)=>(b.fitness||0)-(a.fitness||0));
     return this.online;
   },
 
-  async checkServer(){
-    // Only allow server checks/fetches every 3 minutes to stay under Cloudflare limits
+  async checkServer(targetUrl){
+    const url = targetUrl || this.currentUrl || this.serverUrl;
+    // Throttling for remote only
+    const isRemote = url.includes('wascomb.com');
     const now = Date.now();
-    if (this.lastServerFetchTime > 0 && now - this.lastServerFetchTime < 180000) return this.online;
-    this.lastServerFetchTime = now;
+    if (isRemote && this.lastServerFetchTime > 0 && now - this.lastServerFetchTime < 180000) return this.online;
+    if (isRemote) this.lastServerFetchTime = now;
 
-    try{const resp=await fetch(this.serverUrl+'/health',{cache:'no-store'});if(resp.ok){this.online=true;this.currentUrl=this.serverUrl;await this.fetchServerNetworks();return true;}}catch(e){console.error('checkServer: unreachable');}
-    this.online=false;return false;
+    try{
+      const resp=await fetch(url+'/health',{cache:'no-store'});
+      if(resp.ok){
+        this.online=true;
+        this.currentUrl=url;
+        await this.fetchServerNetworks();
+        return true;
+      }
+    }catch(e){
+      console.error('checkServer: unreachable ->', url);
+    }
+    this.online=false;
+    return false;
   },
 
   async reconnect(){const connected=await this.checkServer();},

@@ -743,9 +743,113 @@ async function runBatch() {
   if (isRunning) requestAnimationFrame(runBatch);
 }
 
-// ── Submit best networks to server ──────────────────────────────────
-const SUBMIT_EVERY = 10;
-let lastServerSubmitTime = 0; // Throttle for Cloudflare
+// ═══════════════════════════════════════════════════════════════════════
+//  SERVER / UI CONTROLS
+// ═══════════════════════════════════════════════════════════════════════
+const localUrl = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? window.location.origin
+  : 'http://localhost:3000';
+const remoteUrl = 'https://llamagame-ai-server.wascomb.com';
+let currentServerUrl = localUrl;
+
+async function testServer() {
+  const statusEl = document.getElementById('status');
+  
+  // Try local first
+  try {
+    const r = await fetch(localUrl + '/health');
+    if (r.ok) {
+      const h = await r.json();
+      currentServerUrl = localUrl;
+      statusEl.innerHTML = `<div style="color:#0f0">🟢 Local Server Online — Networks: ${h.networks}</div>`;
+      document.getElementById('statServerBest').textContent = Math.floor(h.bestFitness);
+      return true;
+    }
+  } catch (e) { /* local fail */ }
+
+  // Fallback to remote
+  try {
+    const r = await fetch(remoteUrl + '/health');
+    if (r.ok) {
+      const h = await r.json();
+      currentServerUrl = remoteUrl;
+      statusEl.innerHTML = `<div style="color:#f5c542">🟡 Remote Server Online (Cloudflare) — Networks: ${h.networks}</div>`;
+      document.getElementById('statServerBest').textContent = Math.floor(h.bestFitness);
+      return true;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<div style="color:#f00">🔴 All Servers Offline</div>`;
+  }
+  return false;
+}
+
+async function fetchServerNetworks() {
+  try {
+    const r = await fetch(currentServerUrl + '/api/networks?source=tested&limit=30');
+    if (r.ok) {
+      const d = await r.json();
+      return d.networks || [];
+    }
+  } catch (e) { /* offline */ }
+  return [];
+}
+
+async function syncTopServerNetworks() {
+  try {
+    const r = await fetch(currentServerUrl + '/api/networks?source=tested&limit=20');
+    if (!r.ok) return;
+    const d = await r.json();
+    const strong = (d.networks || []).filter(n => (n.aiEvaluations || 0) > 0);
+    if (strong.length === 0) return;
+
+    for (const nd of strong.slice(0, 5)) {
+      const nn = new NeuralNetwork(52, 48, 6);
+      if (nn.w1.length !== nd.w1?.length || nn.w2.length !== nd.w2?.length ||
+          nn.b1.length !== nd.b1?.length || nn.b2.length !== nd.b2?.length) continue;
+      nn.w1.set(nd.w1); nn.w2.set(nd.w2); nn.b1.set(nd.b1); nn.b2.set(nd.b2);
+      nn.externalScore = typeof nd.aiScore === 'number' ? nd.aiScore : 0;
+      nn.fitness = nd.fitness;
+      nn.serverId = nd.id || null;
+      population.push(nn);
+    }
+
+    population.sort((a, b) => b.fitness - a.fitness);
+    population = population.slice(0, CONFIG.populationSize);
+    log('Synced networks from ' + (currentServerUrl.includes('wascomb') ? 'Remote' : 'Local') + ' server.', 'good');
+  } catch (e) {
+    log(`Server sync error: ${e.message}`, 'warn');
+  }
+}
+
+async function startFastTraining() {
+  if (isRunning) return;
+
+  await testServer();
+  log('Connecting to server...', 'warn');
+  const serverNets = await fetchServerNetworks();
+
+  if (serverNets.length > 0) {
+    log(`⚠️  Loaded ${serverNets.length} networks from ${currentServerUrl}.`, 'warn');
+  }
+
+  initPopulation(serverNets);
+
+  isRunning = true;
+  evalIndex = 0;
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('stopBtn').disabled  = false;
+  log('Training started.', 'good');
+
+  lastFpsTime = performance.now();
+  requestAnimationFrame(runBatch);
+}
+
+function stopFastTraining() {
+  isRunning = false;
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled  = true;
+  log('Training stopped.');
+}
 
 async function submitBest() {
   if (generation % SUBMIT_EVERY !== 0) return;
@@ -768,7 +872,7 @@ async function submitBest() {
   }
 
   try {
-    const resp = await fetch(serverUrl + '/api/networks', {
+    const resp = await fetch(currentServerUrl + '/api/networks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -790,110 +894,13 @@ async function submitBest() {
       const r = await resp.json();
       totalSubmitted += r.added;
       document.getElementById('statSubmitted').textContent = totalSubmitted;
-      if (r.bestFitness !== undefined) {
-        document.getElementById('statServerBest').textContent = Math.floor(r.bestFitness);
-        document.getElementById('status').innerHTML =
-          `<div style="color:#0f0">🟢 Server Online — Server best: ${Math.floor(r.bestFitness)}</div>`;
-      }
-      if (r.added > 0) log(`Submitted ${r.added} networks for AI battle-testing (server best: ${Math.floor(r.bestFitness)})`, 'good');
+      log(`Submitted ${r.added} networks to ${currentServerUrl.includes('wascomb') ? 'Remote' : 'Local'}`, 'good');
       await syncTopServerNetworks();
     }
   } catch (e) {
     log(`Submit error: ${e.message}`, 'bad');
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-//  SERVER / UI CONTROLS
-// ═══════════════════════════════════════════════════════════════════════
-const serverUrl = window.location.origin;
-
-async function testServer() {
-  const statusEl = document.getElementById('status');
-  try {
-    const r = await fetch(serverUrl + '/health');
-    if (r.ok) {
-      const h = await r.json();
-      statusEl.innerHTML = `<div style="color:#0f0">🟢 Server Online — Networks: ${h.networks}</div>`;
-      document.getElementById('statServerBest').textContent = Math.floor(h.bestFitness);
-      return true;
-    }
-  } catch (e) {
-    statusEl.innerHTML = `<div style="color:#f00">🔴 Server Offline</div>`;
-  }
-  return false;
-}
-
-async function fetchServerNetworks() {
-  try {
-    const r = await fetch(serverUrl + '/api/networks?source=tested&limit=30');
-    if (r.ok) {
-      const d = await r.json();
-      return d.networks || [];
-    }
-  } catch (e) { /* offline */ }
-  return [];
-}
-
-async function syncTopServerNetworks() {
-  try {
-    const r = await fetch(serverUrl + '/api/networks?source=tested&limit=20');
-    if (!r.ok) return;
-    const d = await r.json();
-    const strong = (d.networks || []).filter(n => (n.aiEvaluations || 0) > 0);
-    if (strong.length === 0) return;
-
-    for (const nd of strong.slice(0, 5)) {
-      const nn = new NeuralNetwork(52, 48, 6);
-      if (nn.w1.length !== nd.w1?.length || nn.w2.length !== nd.w2?.length ||
-          nn.b1.length !== nd.b1?.length || nn.b2.length !== nd.b2?.length) continue;
-      nn.w1.set(nd.w1); nn.w2.set(nd.w2); nn.b1.set(nd.b1); nn.b2.set(nd.b2);
-      nn.externalScore = typeof nd.aiScore === 'number' ? nd.aiScore : 0;
-      nn.fitness = nd.fitness;
-      nn.serverId = nd.id || null;
-      population.push(nn);
-    }
-
-    population.sort((a, b) => b.fitness - a.fitness);
-    population = population.slice(0, CONFIG.populationSize);
-    log('Synced AI-scored server networks into population.', 'good');
-  } catch (e) {
-    log(`Server sync error: ${e.message}`, 'warn');
-  }
-}
-
-async function startFastTraining() {
-  if (isRunning) return;
-
-  await testServer();
-  log('Fetching server networks to seed population...', 'warn');
-  const serverNets = await fetchServerNetworks();
-
-  if (serverNets.length > 0) {
-    log(`⚠️  Loaded ${serverNets.length} server networks. If the llama still camps after ` +
-        `a few generations, use monitor.html → "Clear All Training" to wipe old data.`, 'warn');
-  }
-
-  initPopulation(serverNets);
-
-  isRunning = true;
-  evalIndex = 0;
-  document.getElementById('startBtn').disabled = true;
-  document.getElementById('stopBtn').disabled  = false;
-  log('Training started.', 'good');
-
-  lastFpsTime = performance.now();
-  requestAnimationFrame(runBatch);
-}
-
-function stopFastTraining() {
-  isRunning = false;
-  document.getElementById('startBtn').disabled = false;
-  document.getElementById('stopBtn').disabled  = true;
-  log('Training stopped.');
-}
-
-testServer();
 </script>
 </body>
 </html>
