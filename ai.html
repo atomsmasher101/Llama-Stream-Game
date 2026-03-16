@@ -442,9 +442,7 @@ class NeuralNetwork{
   randomize(){for(let i=0;i<this.w1.length;i++)this.w1[i]=(Math.random()*2-1)*0.5;for(let i=0;i<this.w2.length;i++)this.w2[i]=(Math.random()*2-1)*0.5;for(let i=0;i<this.b1.length;i++)this.b1[i]=(Math.random()*2-1)*0.2;for(let i=0;i<this.b2.length;i++)this.b2[i]=(Math.random()*2-1)*0.2;}
   clone(){const nn=new NeuralNetwork(this.inputSize,this.hiddenSize,this.outputSize);nn.w1.set(this.w1);nn.w2.set(this.w2);nn.b1.set(this.b1);nn.b2.set(this.b2);nn.fitness=this.fitness||0;nn.deaths=this.deaths||0;nn.levelsCompleted=this.levelsCompleted||0;nn.enemiesKilled=this.enemiesKilled||0;nn.isExplorer=this.isExplorer||false;nn.id=this.id||null;return nn;}
   mutate(rate,highVariance=false){const vm=highVariance?3.0:1.0;const mv=(v)=>{if(Math.random()<rate){if(highVariance&&Math.random()<0.2)return(Math.random()*2-1)*0.5;return v+(Math.random()*2-1)*0.3*vm;}return v;};for(let i=0;i<this.w1.length;i++)this.w1[i]=mv(this.w1[i]);for(let i=0;i<this.w2.length;i++)this.w2[i]=mv(this.w2[i]);for(let i=0;i<this.b1.length;i++)this.b1[i]=mv(this.b1[i]);for(let i=0;i<this.b2.length;i++)this.b2[i]=mv(this.b2[i]);}
-  sigmoid(x){return 1/(1+Math.exp(-Math.max(-500,Math.min(500,x))));}
-  relu(x){return Math.max(0,x);}
-  forward(inputs){this.hidden=new Float32Array(this.hiddenSize);this.output=new Float32Array(this.outputSize);for(let i=0;i<this.hiddenSize;i++){let sum=this.b1[i];for(let j=0;j<this.inputSize;j++)sum+=inputs[j]*this.w1[j*this.hiddenSize+i];this.hidden[i]=this.relu(sum);}for(let i=0;i<this.outputSize;i++){let sum=this.b2[i];for(let j=0;j<this.hiddenSize;j++)sum+=this.hidden[j]*this.w2[j*this.outputSize+i];this.output[i]=this.sigmoid(sum);}return this.output;}
+  forward(inputs){this.hidden=new Float32Array(this.hiddenSize);this.output=new Float32Array(this.outputSize);for(let i=0;i<this.hiddenSize;i++){let sum=this.b1[i];for(let j=0;j<this.inputSize;j++)sum+=inputs[j]*this.w1[j*this.hiddenSize+i];this.hidden[i]=Math.tanh(sum);}for(let i=0;i<this.outputSize;i++){let sum=this.b2[i];for(let j=0;j<this.hiddenSize;j++)sum+=this.hidden[j]*this.w2[j*this.outputSize+i];this.output[i]=Math.tanh(sum);}return this.output;}
 }
 
 const AI={
@@ -556,9 +554,9 @@ const AI={
   },
 
   async submitEvaluation(network){
-    if(!network?.id||network?.producer!=='fast_trainer')return;
+    if(!network?.id)return;
     // Only submit if we actually cleared a level or made it really far, to save requests
-    if((network.levelsCompleted||0)===0 && (llama?llama.x:0) < 600) return;
+    if((network.levelsCompleted||0)===0 && (llama?llama.x:0) < 400) return;
 
     const url=this.currentUrl||this.serverUrl;
     try{
@@ -568,20 +566,27 @@ const AI={
         const data=await resp.json();
         network.aiEvaluations=data.aiEvaluations||(network.aiEvaluations||0)+1;
         network.fitness = data.fitness;
+      } else {
+        console.error('submitEvaluation: server returned error', resp.status);
       }
-    }catch(e){}
+    }catch(e){
+      console.error('submitEvaluation: fetch failed', e);
+    }
   },
 
   async submitNetwork(network){
     const url=this.currentUrl||this.serverUrl;
-    // Massive gate: only submit if they finished level 1
-    if(!network||(network.levelsCompleted||0)===0)return;
+    // Massive gate: only submit if they finished level 1 or have decent fitness
+    if(!network||((network.levelsCompleted||0)===0 && (network.fitness||0) < 500))return;
     if(!this.submitReady)return;
     this.submitReady=false;setTimeout(()=>{this.submitReady=true;},60000); // 60s throttle
     try{
       const finalFitness = network.currentRunFitness || network.fitness;
       const resp=await fetch(url+'/api/networks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({networks:[{id:network.id||undefined,fitness:finalFitness,hiddenSize:this.hiddenSize,w1:Array.from(network.w1),w2:Array.from(network.w2),b1:Array.from(network.b1),b2:Array.from(network.b2),producer:"ai",actionProfile:"full6",trainingStats:{levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0}}]})});
-    }catch(e){}
+      if(!resp.ok) console.error('submitNetwork: server returned error', resp.status);
+    }catch(e){
+      console.error('submitNetwork: fetch failed', e);
+    }
   },
 
   getGameState(){
@@ -761,7 +766,7 @@ function respawnAI(){
     if(currentNetwork.currentRunFitness > currentNetwork.fitness) {
         currentNetwork.fitness = currentNetwork.currentRunFitness;
     }
-    if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=2||currentNetwork.reachedFlag)){AI.submitNetwork(currentNetwork.clone());}
+    if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){AI.submitNetwork(currentNetwork.clone());}
     AI.submitEvaluation(currentNetwork);
     startGameForAI();
   }
