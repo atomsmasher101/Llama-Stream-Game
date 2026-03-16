@@ -57,86 +57,19 @@
 
   <div class="log" id="log"></div>
 
+<script src="/shared/constants.js"></script>
+<script src="/shared/neural-network.js"></script>
+<script src="/shared/physics.js"></script>
+<script src="/shared/level-generator.js"></script>
 <script>
 console.log('[FastTrainer] Initializing Neural Network...');
 
-class NeuralNetwork {
-  constructor(inputSize, hiddenSize, outputSize) {
-    this.inputSize  = inputSize;
-    this.hiddenSize = hiddenSize;
-    this.outputSize = outputSize;
-    this.w1 = new Float32Array(inputSize  * hiddenSize);
-    this.w2 = new Float32Array(hiddenSize * outputSize);
-    this.b1 = new Float32Array(hiddenSize);
-    this.b2 = new Float32Array(outputSize);
-    this.fitness = 0;
-    this.randomize();
-  }
-  randomize() {
-    const scale1 = Math.sqrt(2 / this.inputSize);
-    const scale2 = Math.sqrt(2 / this.hiddenSize);
-    for (let i = 0; i < this.w1.length; i++) this.w1[i] = (Math.random()*2-1) * scale1;
-    for (let i = 0; i < this.w2.length; i++) this.w2[i] = (Math.random()*2-1) * scale2;
-    for (let i = 0; i < this.b1.length; i++) this.b1[i] = 0;
-    for (let i = 0; i < this.b2.length; i++) this.b2[i] = 0;
-  }
-  clone() {
-    const nn = new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize);
-    nn.w1.set(this.w1); nn.w2.set(this.w2);
-    nn.b1.set(this.b1); nn.b2.set(this.b2);
-    nn.fitness = this.fitness;
-    return nn;
-  }
-  forward(inputs) {
-    const hidden = new Float32Array(this.hiddenSize);
-    for (let j = 0; j < this.hiddenSize; j++) {
-      let s = this.b1[j];
-      for (let i = 0; i < this.inputSize; i++) s += inputs[i] * this.w1[i * this.hiddenSize + j];
-      hidden[j] = Math.tanh(s);
-    }
-    const outputs = new Float32Array(this.outputSize);
-    for (let k = 0; k < this.outputSize; k++) {
-      let s = this.b2[k];
-      for (let j = 0; j < this.hiddenSize; j++) s += hidden[j] * this.w2[j * this.outputSize + k];
-      outputs[k] = Math.tanh(s);
-    }
-    return outputs;
-  }
-  mutate(rate, sigma = 0.25) {
-    for (let i = 0; i < this.w1.length; i++) if (Math.random() < rate) this.w1[i] += (Math.random()*2-1)*sigma;
-    for (let i = 0; i < this.w2.length; i++) if (Math.random() < rate) this.w2[i] += (Math.random()*2-1)*sigma;
-    for (let i = 0; i < this.b1.length; i++) if (Math.random() < rate) this.b1[i] += (Math.random()*2-1)*sigma;
-    for (let i = 0; i < this.b2.length; i++) if (Math.random() < rate) this.b2[i] += (Math.random()*2-1)*sigma;
-  }
-}
+const NeuralNetwork = window.LlamaShared.NeuralNetwork;
 
-const W = 800, H = 450;
-const LW = 14, LH = 18;
-
-function createLevel(n) {
-  const ground = { x: 0, y: 390, w: 800, h: 60 };
-  if (n === 1) {
-    return {
-      platforms: [ground, { x: 150, y: 310, w: 100, h: 16 }, { x: 300, y: 250, w: 100, h: 16 }, { x: 460, y: 300, w: 100, h: 16 }, { x: 600, y: 240, w: 120, h: 16 }, { x:  50, y: 220, w:  80, h: 16 }],
-      hazards: [{ x: 220, y: 376, w: 24, h: 14 }, { x: 430, y: 376, w: 24, h: 14 }, { x: 590, y: 376, w: 24, h: 14 }],
-      enemies: [{ x: 350, y: 362, w: 32, h: 28, vx: 1.5, patrolA: 290, patrolB: 410, type: 'walker', dead: false }, { x: 550, y: 362, w: 32, h: 28, vx: 1.5, patrolA: 480, patrolB: 620, type: 'walker', dead: false }, { x: 200, y: 282, w: 32, h: 28, vx: 1.2, patrolA: 150, patrolB: 250, type: 'patroller', dead: false }, { x: 300, y: 190, w: 36, h: 36, vx: 1.2, patrolA: 160, patrolB: 440, type: 'ginger', dead: false, baseY: 190, floatTimer: 0 }, { x: 500, y: 150, w: 36, h: 36, vx: 1.2, patrolA: 360, patrolB: 640, type: 'ginger', dead: false, baseY: 150, floatTimer: 1.5 }],
-      coins: [{ x: 175, y: 295, collected: false }, { x: 200, y: 295, collected: false }, { x: 225, y: 295, collected: false }, { x: 325, y: 235, collected: false }, { x: 350, y: 235, collected: false }, { x: 625, y: 225, collected: false }, { x: 650, y: 225, collected: false }, { x: 675, y: 225, collected: false }],
-      flag: { x: 720, y: 300, w: 20, h: 90 }, startX: 60, startY: 372,
-    };
-  }
-  if (n === 2) {
-    return {
-      platforms: [ground, { x: 60, y: 320, w: 130, h: 16 }, { x: 240, y: 280, w: 130, h: 16 }, { x: 420, y: 240, w: 130, h: 16 }, { x: 590, y: 280, w: 160, h: 16 }, { x: 150, y: 190, w: 110, h: 16 }, { x: 470, y: 160, w: 110, h: 16 }],
-      hazards: [{ x: 340, y: 376, w: 24, h: 14 }, { x: 570, y: 376, w: 24, h: 14 }],
-      enemies: [{ x: 280, y: 362, w: 32, h: 28, vx: 1.5, patrolA: 200, patrolB: 360, type: 'walker', dead: false }, { x: 460, y: 362, w: 32, h: 28, vx: 1.5, patrolA: 380, patrolB: 540, type: 'walker', dead: false }, { x: 620, y: 252, w: 32, h: 28, vx: 1.2, patrolA: 590, patrolB: 740, type: 'patroller', dead: false }, { x: 200, y: 140, w: 36, h: 36, vx: 1.2, patrolA:  60, patrolB: 340, type: 'ginger', dead: false, baseY: 140, floatTimer: 0.5 }, { x: 450, y: 110, w: 36, h: 36, vx: 1.2, patrolA: 310, patrolB: 590, type: 'ginger', dead: false, baseY: 110, floatTimer: 2.1 }, { x: 620, y: 160, w: 36, h: 36, vx: 1.0, patrolA: 480, patrolB: 760, type: 'ginger', dead: false, baseY: 160, floatTimer: 0.8 }, { x: 350, y: 40, w: 40, h: 34, type: 'volanradooga', dead: false, baseX: 350, baseY: 40, floatTimer: 0.0, vx: 0, vy: 0, state: 'patrol', attackCooldown: 0, chaseTimer: 0 }],
-      coins: [{ x: 80, y: 305, collected: false }, { x: 110, y: 305, collected: false }, { x: 255, y: 265, collected: false }, { x: 285, y: 265, collected: false }, { x: 490, y: 145, collected: false }, { x: 520, y: 145, collected: false }],
-      flag: { x: 730, y: 240, w: 20, h: 90 }, startX: 60, startY: 372,
-    };
-  }
-  return createLevel(1);
-}
-
-const GRAVITY = 0.55, JUMP_F = -12, MOVE_SPD = 3.5, MAX_FRAMES = 2400;
+const { WIDTH: W, HEIGHT: H, LLAMA_WIDTH: LW, LLAMA_HEIGHT: LH, GRAVITY, JUMP_FORCE: JUMP_F, MOVE_SPEED: MOVE_SPD, MAX_SIM_FRAMES } = window.LlamaShared.constants;
+const { resolvePlatformLanding } = window.LlamaShared.physics;
+const createLevel = (n) => window.LlamaShared.createLevel(n);
+const MAX_FRAMES = MAX_SIM_FRAMES;
 
 function simulateNetwork(network, levelNum = 1) {
   const level = createLevel(levelNum);
@@ -226,20 +159,14 @@ function simulateNetwork(network, levelNum = 1) {
     if (squashiePower > 0) squashiePower--;
     if (gingerWig > 0) gingerWig--;
 
-    x = Math.max(0, Math.min(W - 28, x));
+    x = Math.max(0, Math.min(W - LW, x));
     onGround = false;
-    for (const p of level.platforms) {
-      // Improved rectangular collision
-      if (x < p.x + p.w && x + 28 > p.x && y < p.y + p.h && y + 36 > p.y) {
-        const fromAbove = vy >= 0;
-        if (fromAbove && y + 36 - vy <= p.y + 2) {
-          y = p.y - 36; vy = 0; onGround = true; break;
-        }
-      }
-    }
+    const body = { x, y, w: LW, h: LH, vy };
+    onGround = resolvePlatformLanding(body, level.platforms, vy);
+    x = body.x; y = body.y; vy = body.vy;
 
     for (const sp of level.hazards) {
-      if (x < sp.x + sp.w && x + 28 > sp.x && y < sp.y + sp.h && y + 36 > sp.y) {
+      if (x < sp.x + sp.w && x + LW > sp.x && y < sp.y + sp.h && y + LH > sp.y) {
         if (squashiePower <= 0) { alive = false; break; }
       }
     }
@@ -247,9 +174,9 @@ function simulateNetwork(network, levelNum = 1) {
 
     for (const e of enemies) {
       if (e.dead) continue;
-      if (x < e.x + e.w && x + 28 > e.x && y < e.y + e.h && y + 36 > e.y) {
+      if (x < e.x + e.w && x + LW > e.x && y < e.y + e.h && y + LH > e.y) {
         const stompZone = { x: e.x, y: e.y, w: e.w, h: e.h * 0.4 };
-        const llamaFeet = { x: x + 4, y: y + 36 - 16, w: 20, h: 16 };
+        const llamaFeet = { x: x + 4, y: y + LH - 16, w: 20, h: 16 };
         const isStomp = vy > 0 && llamaFeet.x < stompZone.x + stompZone.w && llamaFeet.x + llamaFeet.w > stompZone.x && llamaFeet.y < stompZone.y + stompZone.h && llamaFeet.y + llamaFeet.h > stompZone.y;
 
         if (isStomp || squashiePower > 0) {
@@ -269,7 +196,7 @@ function simulateNetwork(network, levelNum = 1) {
 
     for (const c of level.coins) { if (!c.collected && Math.abs(x - c.x) < 20 && Math.abs(y - c.y) < 20) { c.collected = true; coinsCollected++; score += 100; } }
 
-    if (x + 28 > level.flag.x && x < level.flag.x + level.flag.w && y + 36 > level.flag.y && y < level.flag.y + level.flag.h) {
+    if (x + LW > level.flag.x && x < level.flag.x + level.flag.w && y + LH > level.flag.y && y < level.flag.y + level.flag.h) {
       reachedFlag = true; score += 5000; break;
     }
 
