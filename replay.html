@@ -420,6 +420,14 @@ const W = canvas.width, H = canvas.height;
 let state = 'playing'; // title | playing | dead | win
 let score = 0, lives = 3, level = 1;
 let frameCount = 0;
+const RNG = {
+  seed: 42,
+  next() {
+    this.seed = (this.seed * 16807) % 2147483647;
+    return (this.seed - 1) / 2147483646;
+  },
+  reset(s = 42) { this.seed = s; }
+};
 
 // ── RAINBOW (added by Pratchetty) ──────────────────────────────────────────
 function rb(offset = 0, alpha = 1) {
@@ -666,11 +674,11 @@ function makeGinger(x, y) {
     w: 36, h: 36,
     type: 'ginger',
     baseY: y,
-    vx: 1.2 + Math.random() * 0.8,
+    vx: 1.2 + RNG.next() * 0.8,
     vy: 0,
     patrolA: x - 140,
     patrolB: x + 140,
-    floatTimer: Math.random() * Math.PI * 2,
+    floatTimer: RNG.next() * Math.PI * 2,
     dead: false,
     deadTimer: 0,
     frame: 0,
@@ -687,12 +695,12 @@ function makeVolanRadooga(x, y) {
     baseX: x,
     baseY: y,
     vx: 0, vy: 0,
-    floatTimer: Math.random() * Math.PI * 2,
+    floatTimer: RNG.next() * Math.PI * 2,
     alertTimer: 0,     // frames since player entered aggro range
     state: 'patrol',   // 'patrol' | 'chase' | 'attack' | 'retreat'
     chaseTimer: 0,
     attackCooldown: 0,
-    tailPhase: Math.random() * Math.PI * 2,
+    tailPhase: RNG.next() * Math.PI * 2,
     dead: false,
     deadTimer: 0,
     frame: 0,
@@ -3500,561 +3508,145 @@ class NeuralNetwork {
     for (let i = 0; i < this.b2.length; i++) this.b2[i] = mutateVal(this.b2[i]);
   }
   
-  sigmoid(x) {
-    return 1 / (1 + Math.exp(-Math.max(-500, Math.min(500, x))));
-  }
-  
-  relu(x) { return Math.max(0, x); }
-  
-  forward(inputs) {
-    this.hidden = new Float32Array(this.hiddenSize);
-    this.output = new Float32Array(this.outputSize);
-    
-    // Hidden layer
-    for (let i = 0; i < this.hiddenSize; i++) {
-      let sum = this.b1[i];
-      for (let j = 0; j < this.inputSize; j++) {
-        sum += inputs[j] * this.w1[j * this.hiddenSize + i];
-      }
-      this.hidden[i] = this.relu(sum);
-    }
-    
-    // Output layer (6 outputs: left, right, jump, jumpHeld, spit, shoot)
-    for (let i = 0; i < this.outputSize; i++) {
-      let sum = this.b2[i];
-      for (let j = 0; j < this.hiddenSize; j++) {
-        sum += this.hidden[j] * this.w2[j * this.outputSize + i];
-      }
-      this.output[i] = this.sigmoid(sum);
-    }
-    
-    return this.output;
-  }
+  forward(inputs){this.hidden=new Float32Array(this.hiddenSize);this.output=new Float32Array(this.outputSize);for(let i=0;i<this.hiddenSize;i++){let sum=this.b1[i];for(let j=0;j<this.inputSize;j++)sum+=inputs[j]*this.w1[j*this.hiddenSize+i];this.hidden[i]=Math.tanh(sum);}for(let i=0;i<this.outputSize;i++){let sum=this.b2[i];for(let j=0;j<this.hiddenSize;j++)sum+=this.hidden[j]*this.w2[j*this.outputSize+i];this.output[i]=Math.tanh(sum);}return this.output;}
 }
 
-const AI = {
-  population: [],
-  bestNetwork: null,
-  generation: 0,
-  active: false,
-  pausedForAI: false,
-  inputSize: 52,
-  hiddenSize: 32,
-  outputSize: 6,
+const AI={
+  population:[],bestNetwork:null,generation:0,active:false,pausedForAI:false,
+  inputSize:52,hiddenSize:48,outputSize:6,
   serverUrl: (new URLSearchParams(window.location.search).get('server')) || 
              'https://llamagame-ai-server.wascomb.com',
-  online: false,
-  submitReady: true,
+  online:false,submitReady:true,
   
-  init(populationSize = 40) {
-    this.population = [];
-    for (let i = 0; i < populationSize; i++) {
-      this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
+  init(populationSize=40){
+    this.population=[];
+    this.generation=0;this.active=true;this.hiddenSize=48;
+    this.replayMode=false;this.replayNetwork=null;
+    
+    const urlParams=new URLSearchParams(window.location.search);
+    const replayData=urlParams.get('replay');
+    const speedParam=urlParams.get('speed');
+    this.replaySpeed=speedParam?parseFloat(speedParam):1.0;
+    
+    if(replayData){
+      try{
+        const networkData=JSON.parse(decodeURIComponent(replayData));
+        this.replayMode=true;
+        this.replayNetwork=new NeuralNetwork(this.inputSize,networkData.hiddenSize||48,this.outputSize);
+        this.replayNetwork.w1.set(networkData.w1);this.replayNetwork.w2.set(networkData.w2);this.replayNetwork.b1.set(networkData.b1);this.replayNetwork.b2.set(networkData.b2);
+        this.replayNetwork.fitness=networkData.fitness;this.replayNetwork.id=networkData.id;
+        this.replayNetwork.actionProfile=networkData.actionProfile||'full6';
+        this.replayNetwork.producer=networkData.producer||'unknown';
+      }catch(e){console.error('Failed to load replay network:',e.message);}
     }
-    this.generation = 0;
-    this.active = true;
-    this.hiddenSize = 48;
-    this.replayMode = false;
-    this.replayNetwork = null;
-    
-    // Check for replay mode
-    const urlParams = new URLSearchParams(window.location.search);
-    const replayData = urlParams.get('replay');
-    const speedParam = urlParams.get('speed');
-    
-    // Set replay speed (default 1.0)
-    this.replaySpeed = speedParam ? parseFloat(speedParam) : 1.0;
-    console.log(`Replay speed: ${this.replaySpeed}x`);
-    
-    if (replayData) {
-      try {
-        const networkData = JSON.parse(decodeURIComponent(replayData));
-        console.log('Replay mode: Loading network', networkData.id?.substring(0, 8));
-        this.replayMode = true;
-        this.replayNetwork = new NeuralNetwork(this.inputSize, networkData.hiddenSize || 48, this.outputSize);
-        this.replayNetwork.w1.set(networkData.w1);
-        this.replayNetwork.w2.set(networkData.w2);
-        this.replayNetwork.b1.set(networkData.b1);
-        this.replayNetwork.b2.set(networkData.b2);
-        this.replayNetwork.fitness = networkData.fitness;
-        this.replayNetwork.id = networkData.id;
-        console.log('Replay network loaded successfully!');
-      } catch (e) {
-        console.error('Failed to load replay network:', e.message);
-      }
-    }
-    
-    // Try to connect to server
     this.checkServer();
   },
   
-  async checkServer() {
-    // Try server URL
-    console.log('checkServer: attempting to connect to', this.serverUrl);
-    try {
-      const resp = await fetch(this.serverUrl + '/health', { cache: 'no-store' });
-      console.log('checkServer: response status:', resp.status, resp.statusText);
-      
-      if (resp.ok) {
-        const data = await resp.json();
-        console.log('checkServer: health check response:', data);
-        this.online = true;
-        this.currentUrl = this.serverUrl;
-        console.log('checkServer: connected to AI server!');
-        this.fetchServerNetworks();
-        return true;
-      } else {
-        console.log('checkServer: health check failed, status:', resp.status);
-      }
-    } catch (e) {
-      console.error('checkServer: server unreachable:', e.message);
-      console.error('checkServer: error stack:', e.stack);
-    }
-    
-    this.online = false;
-    console.log('checkServer: running in offline mode');
-    return false;
+  async checkServer(){
+    try{
+      const resp=await fetch(this.serverUrl+'/health',{cache:'no-store'});
+      if(resp.ok){this.online=true;this.currentUrl=this.serverUrl;this.fetchServerNetworks();return true;}
+    }catch(e){}
+    this.online=false;return false;
   },
   
-  async reconnect() {
-    console.log('Attempting to reconnect to server...');
-    const connected = await this.checkServer();
-    if (connected) {
-      console.log('Reconnected successfully!');
-    } else {
-      console.log('Could not reconnect, continuing offline');
-    }
-  },
+  async reconnect(){await this.checkServer();},
   
-  async fetchServerNetworks() {
-    if (!this.online || !this.currentUrl) {
-      console.log('fetchServerNetworks: offline or no currentUrl');
-      return;
-    }
-    
-    const url = this.currentUrl + '/api/networks?limit=10';
-    console.log('fetchServerNetworks: attempting to fetch from', url);
-    
-    try {
-      const resp = await fetch(url, { cache: 'no-store' });
-      console.log('fetchServerNetworks: response received, status:', resp.status, resp.statusText);
-      console.log('fetchServerNetworks: response headers:', Object.fromEntries(resp.headers.entries()));
-      
-      if (resp.ok) {
-        // Get response text first for debugging
-        const responseText = await resp.text();
-        console.log('fetchServerNetworks: response text length:', responseText.length);
-        console.log('fetchServerNetworks: response text preview (first 200 chars):', responseText.substring(0, 200));
-        console.log('fetchServerNetworks: response text preview (last 200 chars):', responseText.substring(responseText.length - 200));
-        
-        // Try to parse JSON
-        let data;
-        try {
-          data = JSON.parse(responseText);
-          console.log('fetchServerNetworks: JSON parsed successfully');
-        } catch (parseError) {
-          console.error('fetchServerNetworks: JSON parsing failed:', parseError.message);
-          console.error('fetchServerNetworks: response text was:', responseText);
-          throw parseError;
-        }
-        
-        if (data.networks && data.networks.length > 0) {
-          console.log(`fetchServerNetworks: fetching ${data.networks.length} networks from server`);
-          
-          // Add server networks to population (replacing worst)
-          for (const netData of data.networks) {
-            try {
-              const net = new NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
-              
-              // Check if sizes match before setting
-              if (net.w1.length !== netData.w1?.length || 
-                  net.w2.length !== netData.w2?.length ||
-                  net.b1.length !== netData.b1?.length ||
-                  net.b2.length !== netData.b2?.length) {
-                console.warn(`Network size mismatch, skipping: w1(${net.w1.length} vs ${netData.w1?.length})`);
-                continue;
-              }
-              
-              net.w1.set(netData.w1);
-              net.w2.set(netData.w2);
-              net.b1.set(netData.b1);
-              net.b2.set(netData.b2);
-              net.fitness = netData.fitness;
-              net.fromServer = true;
-              net.id = netData.id;
-              
-              // Replace worst networks
-              this.population.sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
-              const worstIdx = this.population.length - 1;
-              if (!this.population[worstIdx] || (this.population[worstIdx].fitness || 0) < netData.fitness) {
-                this.population[worstIdx] = net;
-              }
-            } catch (e) {
-              console.warn(`Failed to add network: ${e.message}`);
-            }
+  async fetchServerNetworks(){
+    if(!this.online||!this.currentUrl)return;
+    try{
+      const resp=await fetch(this.currentUrl+'/api/networks?limit=10',{cache:'no-store'});
+      if(resp.ok){
+        const data=await resp.json();
+        if(data.networks){
+          for(const netData of data.networks){
+            try{
+              const net=new NeuralNetwork(this.inputSize,netData.hiddenSize||48,this.outputSize);
+              net.w1.set(netData.w1);net.w2.set(netData.w2);net.b1.set(netData.b1);net.b2.set(netData.b2);
+              net.fitness=netData.fitness;net.id=netData.id;net.producer=netData.producer;net.actionProfile=netData.actionProfile;
+              this.population.push(net);
+            }catch(e){}
           }
-          console.log('fetchServerNetworks: server networks integrated!');
-        } else {
-          console.log('fetchServerNetworks: no networks found in response');
         }
-      } else {
-        console.log('fetchServerNetworks: response not ok, status:', resp.status);
-        const errorText = await resp.text();
-        console.log('fetchServerNetworks: error response:', errorText);
       }
-    } catch (e) {
-      console.error('fetchServerNetworks: failed with error:', e.message);
-      console.error('fetchServerNetworks: error stack:', e.stack);
-    }
+    }catch(e){}
   },
   
-  async submitNetwork(network) {
-    // Always try to submit regardless of online status
-    const url = this.currentUrl || this.serverUrl || 'http://localhost:3000';
-    if (!network || (network.fitness || 0) < 100) {
-      console.log('submitNetwork: skipping - network too weak or invalid');
-      return;
-    }
-    if (!this.submitReady) {
-      console.log('submitNetwork: rate-limited, skipping');
-      return;
-    }
-    
-    this.submitReady = false;
-    setTimeout(() => { this.submitReady = true; }, 10000); // Rate limit: 10 sec
-    
-    const submitUrl = url + '/api/networks';
-    console.log(`submitNetwork: submitting network to ${submitUrl}, fitness: ${network.fitness}`);
-    
-    try {
-      const requestBody = JSON.stringify({
-        networks: [{
-          fitness: network.fitness,
-          hiddenSize: network.hiddenSize || 48,
-          w1: Array.from(network.w1),
-          w2: Array.from(network.w2),
-          b1: Array.from(network.b1),
-          b2: Array.from(network.b2)
-        }]
-      });
-      
-      console.log(`submitNetwork: request body length: ${requestBody.length}`);
-      
-      const resp = await fetch(submitUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody
-      });
-      
-      console.log('submitNetwork: response status:', resp.status, resp.statusText);
-      
-      if (resp.ok) {
-        const responseText = await resp.text();
-        console.log('submitNetwork: response text length:', responseText.length);
-        console.log('submitNetwork: response text preview:', responseText.substring(0, 200));
-        const data = JSON.parse(responseText);
-        console.log(`submitNetwork: network submitted! Added: ${data.added}, Rejected: ${data.rejected}, Best: ${data.bestFitness}`);
-      } else {
-        const errorText = await resp.text();
-        console.log(`submitNetwork: failed with status: ${resp.status}, response:`, errorText);
-      }
-    } catch (e) {
-      console.error('submitNetwork: failed with error:', e.message);
-      console.error('submitNetwork: error stack:', e.stack);
-    }
-  },
+  async submitNetwork(network){}, // Replay doesn't submit new networks
   
-  getGameState() {
-    if (!llama || !lvlData) return new Float32Array(this.inputSize).fill(0);
-    
-    const inputs = new Float32Array(this.inputSize);
-    let idx = 0;
-    
-    // Level boundaries
-    inputs[idx++] = llama.x / W; // Distance from left edge (normalized)
-    inputs[idx++] = (W - llama.x - llama.w) / W; // Distance from right edge (normalized)
-    
-    // Llama state (normalized to 0-1)
-    inputs[idx++] = llama.x / W;
-    inputs[idx++] = llama.y / H;
-    inputs[idx++] = (llama.vx + 5) / 10;
-    inputs[idx++] = (llama.vy + 15) / 30;
-    inputs[idx++] = llama.onGround ? 1 : 0;
-    inputs[idx++] = llama.facing > 0 ? 1 : 0;
-    inputs[idx++] = llama.gunAmmo / 9;
-    inputs[idx++] = llama.squashiePower > 0 ? 1 : 0;
-    inputs[idx++] = llama.gingerWig > 0 ? 1 : 0;
-    
-    // Flag position
-    inputs[idx++] = lvlData.flag.x / W;
-    inputs[idx++] = lvlData.flag.y / H;
-    
-    // Timer (danger indicator)
-    inputs[idx++] = bombTimer / TIMER_START;
-    
-    // Platforms - take top 8
-    for (let i = 0; i < 8; i++) {
-      if (i < lvlData.platforms.length) {
-        const p = lvlData.platforms[i];
-        inputs[idx++] = p.x / W;
-        inputs[idx++] = p.y / H;
-        inputs[idx++] = p.w / W;
-      } else {
-        inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
-      }
+  getGameState(){
+    if(!llama||!lvlData)return new Float32Array(this.inputSize).fill(0);
+    const inputs=new Float32Array(this.inputSize);
+    let idx=0;
+    inputs[idx++]=llama.x/W;
+    inputs[idx++]=(W-llama.x-llama.w)/W;
+    inputs[idx++]=llama.y/H;
+    inputs[idx++]=llama.y/H;
+    inputs[idx++]=(llama.vx+5)/10;
+    inputs[idx++]=(llama.vy+15)/30;
+    inputs[idx++]=llama.onGround?1:0;
+    inputs[idx++]=llama.facing>0?1:0;
+    inputs[idx++]=llama.gunAmmo/9;
+    inputs[idx++]=llama.squashiePower>0?1:0;
+    inputs[idx++]=llama.gingerWig>0?1:0;
+    inputs[idx++]=(lvlData.flag.x - llama.x)/W;
+    inputs[idx++]=(lvlData.flag.y - llama.y)/H;
+    inputs[idx++]=bombTimer/TIMER_START;
+    const sortedPlats=lvlData.platforms.slice().sort((a,b)=>Math.abs((a.x+a.w/2)-llama.x)-Math.abs((b.x+b.w/2)-llama.x));
+    for(let i=0;i<8;i++){
+      if(i<sortedPlats.length){const p=sortedPlats[i];inputs[idx++]=p.x/W;inputs[idx++]=p.y/H;inputs[idx++]=p.w/W;}
+      else{inputs[idx++]=0;inputs[idx++]=0;inputs[idx++]=0;}
     }
-    
-    // Enemies - take top 8
-    for (let i = 0; i < 8; i++) {
-      if (i < lvlData.enemies.length && !lvlData.enemies[i].dead) {
-        const e = lvlData.enemies[i];
-        inputs[idx++] = e.x / W;
-        inputs[idx++] = e.y / H;
-        inputs[idx++] = e.type === 'jimmy' ? 1 : (e.type === 'ginger' ? 0.5 : 0.25);
-        inputs[idx++] = e.type === 'volanradooga' ? 0.75 : 0;
-        if (e.type === 'jimmy') inputs[idx - 1] = 1 + (e.hp || 1) / 5;
-      } else {
-        inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0; inputs[idx++] = 0;
-      }
+    const sortedEnemies=lvlData.enemies.filter(e=>!e.dead).sort((a,b)=>Math.abs(a.x-llama.x)-Math.abs(b.x-llama.x));
+    for(let i=0;i<3;i++){
+      if(i<sortedEnemies.length){const e=sortedEnemies[i];inputs[idx++]=e.x/W;inputs[idx++]=e.y/H;inputs[idx++]=e.w/W;inputs[idx++]=e.type==='volanradooga'?1:(e.type==='ginger'?0.5:0);}
+      else{inputs[idx++]=0;inputs[idx++]=0;inputs[idx++]=0;inputs[idx++]=0;}
     }
-    
-    // Coins - take top 4
-    let coinsCollected = 0;
-    for (let i = 0; i < 4; i++) {
-      if (i < lvlData.coins.length && !lvlData.coins[i].collected) {
-        const c = lvlData.coins[i];
-        inputs[idx++] = c.x / W;
-        inputs[idx++] = c.y / H;
-        coinsCollected++;
-      } else {
-        inputs[idx++] = 0; inputs[idx++] = 0;
-      }
-    }
-    inputs[idx++] = coinsCollected / 4;
-    
-    // Collectibles
-    let squashies = 0;
-    for (let i = 0; i < lvlData.squashies?.length; i++) {
-      if (!lvlData.squashies[i].collected) squashies++;
-    }
-    inputs[idx++] = squashies > 0 ? 1 : 0;
-    
-    let guns = 0;
-    for (let i = 0; i < lvlData.guns?.length; i++) {
-      if (!lvlData.guns[i].collected) guns++;
-    }
-    inputs[idx++] = guns > 0 ? 1 : 0;
-    
-    // Spikes/hazards - closest 2
-    for (let i = 0; i < 2; i++) {
-      if (i < lvlData.hazards.length) {
-        const h = lvlData.hazards[i];
-        inputs[idx++] = h.x / W;
-        inputs[idx++] = 1;
-      } else {
-        inputs[idx++] = 0; inputs[idx++] = 0;
-      }
-    }
-    
-    // Falling objects danger
-    let fallingDanger = 0;
-    for (const w of waffles) {
-      if (!w.collected && Math.abs(w.x - llama.x) < 60) fallingDanger = 1;
-    }
-    for (const g of gummyBears) {
-      if (!g.collected && Math.abs(g.x - llama.x) < 60) fallingDanger = Math.max(fallingDanger, 0.8);
-    }
-    inputs[idx++] = fallingDanger;
-    
-    // Enemies alive count
-    let enemiesAlive = 0;
-    for (const e of lvlData.enemies) {
-      if (!e.dead) enemiesAlive++;
-    }
-    inputs[idx++] = enemiesAlive / 10;
-    
+    let coinsCollected=0;
+    for(let i=0;i<4;i++){if(i<lvlData.coins.length&&!lvlData.coins[i].collected){const c=lvlData.coins[i];inputs[idx++]=c.x/W;inputs[idx++]=c.y/H;coinsCollected++;}else{inputs[idx++]=0;inputs[idx++]=0;}}
+    inputs[idx++]=coinsCollected/4;
+    let squashies=0;for(let i=0;i<(lvlData.squashies?.length||0);i++)if(!lvlData.squashies[i].collected)squashies++;
+    inputs[idx++]=squashies>0?1:0;
+    let guns=0;for(let i=0;i<(lvlData.guns?.length||0);i++)if(!lvlData.guns[i].collected)guns++;
+    inputs[idx++]=guns>0?1:0;
+    for(let i=0;i<2;i++){if(i<lvlData.hazards.length){inputs[idx++]=lvlData.hazards[i].x/W;inputs[idx++]=1;}else{inputs[idx++]=0;inputs[idx++]=0;}}
+    let fallingDanger=0;for(const w of waffles){if(!w.collected&&Math.abs(w.x-llama.x)<60)fallingDanger=1;}for(const g of gummyBears){if(!g.collected&&Math.abs(g.x-llama.x)<60)fallingDanger=Math.max(fallingDanger,0.8);}
+    inputs[idx++]=fallingDanger;
+    let enemiesAlive=0;for(const e of lvlData.enemies)if(!e.dead)enemiesAlive++;
+    inputs[idx++]=enemiesAlive/10;
     return inputs;
   },
   
-  getAction(network) {
-    const inputs = this.getGameState();
-    const outputs = network.forward(inputs);
-    
-    // Add some noise for exploration
-    const noise = AI.replayMode ? 0 : 0.1;
-    
-    const actionProfile = network?.actionProfile || "full6";
-
-    if (actionProfile === "movement3") {
-      return {
-        left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
-        right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
-        jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
-        jumpHeld: false,
-        spit: false,
-        shoot: false
-      };
-    }
-
-    return {
-      left: outputs[0] > 0.5 + (Math.random() - 0.5) * noise,
-      right: outputs[1] > 0.5 + (Math.random() - 0.5) * noise,
-      jump: outputs[2] > 0.4 + (Math.random() - 0.5) * noise,
-      jumpHeld: outputs[3] > 0.25,
-      spit: outputs[4] > 0.6 && llama.gunAmmo === 0,
-      shoot: outputs[5] > 0.7 && llama.gunAmmo > 0
-    };
+  getAction(network){
+    const inputs=this.getGameState();const outputs=network.forward(inputs);const actionProfile=network?.actionProfile||'full6';
+    if(actionProfile==='movement3')return{left:outputs[0]>0.5,right:outputs[1]>0.5,jump:outputs[2]>0.4,jumpHeld:false,spit:false,shoot:false,down:false};
+    return{left:outputs[0]>0.5,right:outputs[1]>0.5,jump:outputs[2]>0.4,jumpHeld:outputs[3]>0.25,spit:outputs[4]>0.6&&llama.gunAmmo===0,shoot:outputs[5]>0.7&&llama.gunAmmo>0};
   },
   
-  applyAction(action) {
-    keys['ArrowLeft'] = action.left;
-    keys['ArrowRight'] = action.right;
-    keys['ArrowUp'] = action.jump || action.jumpHeld;
-    keys['KeyW'] = action.jump || action.jumpHeld;
+  applyAction(action){keys['ArrowLeft']=action.left;keys['ArrowRight']=action.right;keys['ArrowUp']=action.jump||action.jumpHeld;keys['KeyW']=action.jump||action.jumpHeld;},
+  
+  resetForNewRun(network){
+    network.currentRunFitness=0;
+    network.score=0;network.alive=true;network.frames=0;network.enemiesKilled=0;network.coinsCollected=0;network.collectiblesCollected=0;network.deaths=0;network.jimmyKilled=false;network.allCoins=false;network.reachedFlag=false;network.levelsCompleted=0;network.wafflesEaten=0;
+    network.bonusFitness=0;network.lastX=0;network.stagnationFrames=0;network.maxStagnation=0;network.timeoutDeaths=0;network.levelFullClears=0;
   },
   
-  evolve() {
-    // Sort by fitness
-    this.population.sort((a, b) => b.fitness - a.fitness);
-    
-    const best = this.population[0];
-    console.log(`Gen ${this.generation}: Best fitness = ${best.fitness.toFixed(0)}, Score = ${best.score}`);
-    
-    // Elitism - keep top 2
-    const newPop = [best.clone(), this.population[1].clone()];
-    
-    // Crossover and mutation
-    while (newPop.length < this.population.length) {
-      const parentA = this.population[Math.floor(Math.random() * this.population.length / 2)];
-      const parentB = this.population[Math.floor(Math.random() * this.population.length / 2)];
-      
-      const child = parentA.clone();
-      // Crossover
-      for (let i = 0; i < child.w2.length; i++) {
-        if (Math.random() < 0.5) child.w2[i] = parentB.w2[i];
-      }
-      for (let i = 0; i < child.w1.length; i++) {
-        if (Math.random() < 0.5) child.w1[i] = parentB.w1[i];
-      }
-      // Mutation
-      child.mutate(0.1);
-      newPop.push(child);
-    }
-    
-    this.population = newPop;
-    this.generation++;
-  },
-  
-  resetForNewRun(network) {
-    network.fitness = 0;
-    network.score = 0;
-    network.alive = true;
-    network.frames = 0;
-    network.enemiesKilled = 0;
-    network.coinsCollected = 0;
-    network.collectiblesCollected = 0;
-    network.deaths = 0;
-    network.jimmyKilled = false;
-    network.allCoins = false;
-    network.reachedFlag = false;
-    network.levelsCompleted = 0;
-    network.wafflesEaten = 0;
-    // Stagnation tracking - to discourage staying in one place
-    network.lastX = 0;
-    network.stagnationFrames = 0;
-    network.maxStagnation = 0;
-    // Timeout tracking - to discourage running out of time
-    network.timeoutDeaths = 0;
-  },
-  
-  updateFitness(network) {
-    if (!network.alive) return;
-    
+  updateFitness(network){
+    if(!network.alive)return;
     network.frames++;
-    
-    // Track stagnation - penalize staying in one place
-    if (llama) {
-      const currentX = llama.x;
-      const movedSignificantly = Math.abs(currentX - network.lastX) > 10; // Moved more than 10 pixels
-      
-      if (movedSignificantly) {
-        network.stagnationFrames = 0; // Reset if moving
-        network.lastX = currentX;
-      } else {
-        network.stagnationFrames++;
-        network.maxStagnation = Math.max(network.maxStagnation, network.stagnationFrames);
-      }
-    }
-    
-    // Level completion bonus - increases with each level!
-    const levelBonus = network.levelsCompleted * 5000;
-    
-    const scoreBonus = score * 3;
-    
-    // Enemies killed - weighted heavily for Jimmy
-    let enemyBonus = 0;
-    for (const e of lvlData?.enemies || []) {
-      if (e.dead && e.deadTimer === 30 && !e.scored) {
-        e.scored = true;
-        if (e.type === 'jimmy') enemyBonus += 800;
-        else if (e.type === 'volanradooga') enemyBonus += 400;
-        else if (e.type === 'ginger') enemyBonus += 300;
-        else enemyBonus += 200;
-      }
-    }
-    
-    // Collectibles collected (coins, powerups, guns)
-    let collectibleBonus = 0;
-    for (const c of lvlData?.coins || []) if (c.collected && !c.scored) { c.scored = true; collectibleBonus += 150; }
-    for (const s of lvlData?.squashies || []) if (s.collected && !s.scored) { s.scored = true; collectibleBonus += 400; }
-    for (const g of lvlData?.guns || []) if (g.collected && !g.scored) { g.scored = true; collectibleBonus += 300; }
-    for (const b of lvlData?.gingerBabies || []) if (b.collected && !b.scored) { b.scored = true; collectibleBonus += 500; }
-    for (const p of lvlData?.bigPots || []) if (p.collected && !p.scored) { p.scored = true; collectibleBonus += 750; }
-    
-    // Progress toward flag (much higher reward)
-    let progressBonus = llama ? (llama.x / W) * 3000 : 0;
-    
-    // Movement bonus - reduced significantly to prevent "wiggle" farming
-    // Only reward significant movement, not tiny vibrations
-    const movementBonus = llama ? Math.abs(llama.vx) * 2 : 0;
-    
-    // Big bonus for killing Jimmy
-    if (network.jimmyKilled) progressBonus += 2000;
-    
-    // Bonus for all coins
-    if (network.allCoins) progressBonus += 1000;
-    
-    // Minimal survival bonus (just to prevent instant death rewards)
-    const survivalBonus = Math.min(network.frames * 0.1, 100);
-    
-    // Penalty for dying - increased significantly to prevent "die to save points" strategy
-    const deathPenalty = network.deaths * 10000;
-    
-    // Stagnation penalty - penalize for staying in one place
-    // Increased to discourage camping
-    const stagnationPenalty = network.stagnationFrames * 5;
-    
-    // Timeout penalty - steep penalty for running out of time
-    // This strongly discourages the "stand and shoot until time runs out" strategy
-    const timeoutPenalty = (network.timeoutDeaths || 0) * 5000;
-    
-    // Time penalty - penalize for taking too long to complete
-    // Encourages faster completion (1 point per frame after initial buffer)
-    const timePenalty = Math.max(0, (network.frames - 300) * 1);
-    
-    // Log high stagnation for debugging
-    if (network.stagnationFrames > 120 && network.stagnationFrames % 60 === 0) {
-      console.log(`AI stagnating: ${network.stagnationFrames} frames at same position (penalty: ${stagnationPenalty})`);
-    }
-    
-    // Log timeout deaths for debugging
-    if (network.timeoutDeaths > 0) {
-      console.log(`⚠️ Timeout deaths: ${network.timeoutDeaths}, penalty: ${timeoutPenalty}`);
-    }
-    
-    network.fitness = levelBonus + scoreBonus + enemyBonus + collectibleBonus + progressBonus + movementBonus + survivalBonus - deathPenalty - stagnationPenalty - timeoutPenalty - timePenalty;
-    network.score = score;
-    network.collectiblesCollected = collectibleBonus;
+    if(llama){const currentX=llama.x;const movedSignificantly=Math.abs(currentX-network.lastX)>10;if(movedSignificantly){network.stagnationFrames=0;network.lastX=currentX;}else{network.stagnationFrames++;network.maxStagnation=Math.max(network.maxStagnation,network.stagnationFrames);}}
+
+    const isWinner=network.levelsCompleted>0;const completionMultiplier=isWinner?5.0:1.0;
+    const levelBonus=network.levelsCompleted*15000;const scoreBonus=score*3;
+    let enemyBonus=0;for(const e of lvlData?.enemies||[]){if(e.dead&&e.deadTimer===30&&!e.scored){e.scored=true;if(e.type==='jimmy')enemyBonus+=800;else if(e.type==='volanradooga')enemyBonus+=400;else if(e.type==='ginger')enemyBonus+=300;else enemyBonus+=200;}}
+    let collectibleBonus=0;for(const c of lvlData?.coins||[])if(c.collected&&!c.scored){c.scored=true;collectibleBonus+=150;}for(const s of lvlData?.squashies||[])if(s.collected&&!s.scored){s.scored=true;collectibleBonus+=400;}for(const g of lvlData?.guns||[])if(g.collected&&!g.scored){g.scored=true;collectibleBonus+=300;}for(const b of lvlData?.gingerBabies||[])if(b.collected&&!b.scored){b.scored=true;collectibleBonus+=500;}for(const p of lvlData?.bigPots||[])if(p.collected&&!p.scored){p.scored=true;collectibleBonus+=750;}
+    let progressBonus=0;if(llama&&lvlData){const dx=llama.x-lvlData.flag.x;const dy=llama.y-(lvlData.flag.y+45);const distToFlag=Math.sqrt(dx*dx+dy*dy);progressBonus=(1.0-Math.min(1,distToFlag/W))*5000;}
+    const fullClearBonus=(network.levelFullClears||0)*8000;const survivalBonus=Math.min(network.frames*0.1,100);
+    const progressFactor=llama?(llama.x/W):0;const deathPenalty=network.deaths*(10000*(1.0-progressFactor));
+    const stagnationPenalty=network.stagnationFrames*8;const timeoutPenalty=(network.timeoutDeaths||0)*5000;const timePenalty=Math.max(0,(network.frames-300)*1.5);
+
+    network.fitness=network.bonusFitness+levelBonus+fullClearBonus+((scoreBonus+enemyBonus+collectibleBonus+progressBonus)*completionMultiplier)+survivalBonus-deathPenalty-stagnationPenalty-timeoutPenalty-timePenalty;
+    network.currentRunFitness=network.fitness;
   }
 };
 
