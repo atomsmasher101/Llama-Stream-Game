@@ -502,6 +502,7 @@ app.get('/ai.html', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'ai.html'));
 });
 
+app.use('/shared', express.static(path.join(__dirname, 'shared')));
 app.use(express.static(__dirname));
 
 app.use((req, res) => {
