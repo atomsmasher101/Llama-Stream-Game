@@ -3629,15 +3629,19 @@ const AI={
     network.currentRunFitness=0;
     network.score=0;network.alive=true;network.frames=0;network.enemiesKilled=0;network.coinsCollected=0;network.collectiblesCollected=0;network.deaths=0;network.jimmyKilled=false;network.allCoins=false;network.reachedFlag=false;network.levelsCompleted=0;network.wafflesEaten=0;
     network.bonusFitness=0;network.lastX=0;network.stagnationFrames=0;network.maxStagnation=0;network.timeoutDeaths=0;network.levelFullClears=0;
+    network.stagnationCooldown=0;
+    network.realGameMaxX=60;
+    network.realGameStagnation=0;
   },
-  
+
   updateFitness(network){
     if(!network.alive)return;
     network.frames++;
     if(llama){const currentX=llama.x;const movedSignificantly=Math.abs(currentX-network.lastX)>10;if(movedSignificantly){network.stagnationFrames=0;network.lastX=currentX;}else{network.stagnationFrames++;network.maxStagnation=Math.max(network.maxStagnation,network.stagnationFrames);}}
 
-    const isWinner=network.levelsCompleted>0;const completionMultiplier=isWinner?5.0:1.0;
-    const levelBonus=network.levelsCompleted*15000;const scoreBonus=score*3;
+    if(network.stagnationCooldown>0){network.stagnationCooldown--;network.stagnationFrames=0;}
+
+    const isWinner=network.levelsCompleted>0;const completionMultiplier=isWinner?5.0:1.0;    const levelBonus=network.levelsCompleted*15000;const scoreBonus=score*3;
     let enemyBonus=0;for(const e of lvlData?.enemies||[]){if(e.dead&&e.deadTimer===30&&!e.scored){e.scored=true;if(e.type==='jimmy')enemyBonus+=800;else if(e.type==='volanradooga')enemyBonus+=400;else if(e.type==='ginger')enemyBonus+=300;else enemyBonus+=200;}}
     let collectibleBonus=0;for(const c of lvlData?.coins||[])if(c.collected&&!c.scored){c.scored=true;collectibleBonus+=150;}for(const s of lvlData?.squashies||[])if(s.collected&&!s.scored){s.scored=true;collectibleBonus+=400;}for(const g of lvlData?.guns||[])if(g.collected&&!g.scored){g.scored=true;collectibleBonus+=300;}for(const b of lvlData?.gingerBabies||[])if(b.collected&&!b.scored){b.scored=true;collectibleBonus+=500;}for(const p of lvlData?.bigPots||[])if(p.collected&&!p.scored){p.scored=true;collectibleBonus+=750;}
     let progressBonus=0;if(llama&&lvlData){const dx=llama.x-lvlData.flag.x;const dy=llama.y-(lvlData.flag.y+45);const distToFlag=Math.sqrt(dx*dx+dy*dy);progressBonus=(1.0-Math.min(1,distToFlag/W))*5000;}
@@ -3731,6 +3735,7 @@ function updateAI() {
     if (e.dead && e.deadTimer === 30 && !e.killed) {
       e.killed = true;
       currentNetwork.enemiesKilled++;
+      currentNetwork.stagnationCooldown = 180; // 3 second cooldown
       if (e.type === 'jimmy') {
         currentNetwork.jimmyKilled = true;
         console.log('🎉 JIMMY KILLED! 🎉');
@@ -3751,6 +3756,13 @@ function updateAI() {
   AI.updateFitness(currentNetwork);
   aiFrames++;
   
+  if(llama.x>(currentNetwork.realGameMaxX||60)+5 || (currentNetwork.stagnationCooldown > 0)){currentNetwork.realGameMaxX=llama.x;currentNetwork.realGameStagnation=0;}
+  else{currentNetwork.realGameStagnation=(currentNetwork.realGameStagnation||0)+1;}
+  
+  if(aiFrames===300&&llama.x<130){console.log(`Progress gate 1 FAIL: x=${llama.x.toFixed(0)} — aborting`);currentNetwork.fitness=-8000;currentNetwork.alive=false;respawnAI();return;}
+  if(aiFrames===900&&llama.x<300){console.log(`Progress gate 2 FAIL: x=${llama.x.toFixed(0)} — aborting`);currentNetwork.fitness-=5000;currentNetwork.alive=false;respawnAI();return;}
+  if((currentNetwork.realGameStagnation||0)>240){console.log(`Stagnation abort: stuck at x=${llama.x.toFixed(0)}`);currentNetwork.fitness-=6000;currentNetwork.alive=false;respawnAI();return;}
+
   // Log fitness every 60 frames (~1 second)
   if (aiFrames % 60 === 0) {
     console.log(`[${aiFrames}] Fitness: ${currentNetwork.fitness.toFixed(0)} | Level: ${level}/${currentNetwork.levelsCompleted} | Score: ${score} | Enemies: ${currentNetwork.enemiesKilled}`);

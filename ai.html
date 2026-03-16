@@ -668,12 +668,15 @@ const AI={
     network.isExplorer=network.isExplorer||false;
     network.realGameMaxX=60;
     network.realGameStagnation=0;
+    network.stagnationCooldown=0;
   },
 
   updateFitness(network){
     if(!network.alive)return;
     network.frames++;
     if(llama){const currentX=llama.x;const movedSignificantly=Math.abs(currentX-network.lastX)>10;if(movedSignificantly){network.stagnationFrames=0;network.lastX=currentX;}else{network.stagnationFrames++;network.maxStagnation=Math.max(network.maxStagnation,network.stagnationFrames);}}
+
+    if(network.stagnationCooldown>0){network.stagnationCooldown--;network.stagnationFrames=0;}
 
     // COMPLETION GATING: If you haven't finished a level, your score is strictly limited.
     // This stops "farming and dying" because farming is only worth 1.0x, but finishing is worth a 5.0x multiplier.
@@ -741,12 +744,12 @@ function updateAI(){
   const action=AI.getAction(currentNetwork);AI.applyAction(action);
   if(action.spit&&llama.spitCooldown<=0)trySpit();if(action.shoot&&llama.gunAmmo>0&&llama.shootCooldown<=0)tryShoot();
   for(const c of lvlData.coins)if(c.collected&&!c.tracked){c.tracked=true;currentNetwork.coinsCollected++;}
-  for(const e of lvlData.enemies)if(e.dead&&e.deadTimer===30&&!e.killed){e.killed=true;currentNetwork.enemiesKilled++;if(e.type==='jimmy'){currentNetwork.jimmyKilled=true;console.log('🎉 JIMMY KILLED! 🎉');}}
+  for(const e of lvlData.enemies)if(e.dead&&e.deadTimer===30&&!e.killed){e.killed=true;currentNetwork.enemiesKilled++;currentNetwork.stagnationCooldown=180;if(e.type==='jimmy'){currentNetwork.jimmyKilled=true;console.log('🎉 JIMMY KILLED! 🎉');}}
   let allCoinsCollected=true;for(const c of lvlData.coins)if(!c.collected){allCoinsCollected=false;break;}
   if(allCoinsCollected&&!currentNetwork.allCoins){currentNetwork.allCoins=true;}
   AI.updateFitness(currentNetwork);
   aiFrames++;
-  if(llama.x>(currentNetwork.realGameMaxX||60)+5){currentNetwork.realGameMaxX=llama.x;currentNetwork.realGameStagnation=0;}
+  if(llama.x>(currentNetwork.realGameMaxX||60)+5 || (currentNetwork.stagnationCooldown > 0)){currentNetwork.realGameMaxX=llama.x;currentNetwork.realGameStagnation=0;}
   else{currentNetwork.realGameStagnation=(currentNetwork.realGameStagnation||0)+1;}
   if(aiFrames===300&&llama.x<130){console.log(`Progress gate 1 FAIL: x=${llama.x.toFixed(0)} — aborting`);currentNetwork.currentRunFitness=-8000;currentNetwork.alive=false;respawnAI();return;}
   if(aiFrames===900&&llama.x<300){console.log(`Progress gate 2 FAIL: x=${llama.x.toFixed(0)} — aborting`);currentNetwork.currentRunFitness-=5000;currentNetwork.alive=false;respawnAI();return;}
