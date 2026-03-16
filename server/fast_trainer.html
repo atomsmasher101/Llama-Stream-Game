@@ -295,7 +295,7 @@ function evaluateNetwork(network) {
   return { fitness: (weightedFitness * campaignMult) + campaignBonus, reachedFlag: levelsCleared >= 5, enemiesKilled: runs.reduce((s, r) => s + r.enemiesKilled, 0), coinsCollected: runs.reduce((s, r) => s + r.coinsCollected, 0), maxX: Math.max(...runs.map(r => r.maxX)), alive: runs.every(r => r.alive), levelsCleared, fullClears };
 }
 
-const CONFIG = { populationSize: 60, eliteCount: 6, mutationRate: 0.12, mutationSigma: 0.22, batchSize: 10 };
+const CONFIG = { populationSize: 100, eliteCount: 10, mutationRate: 0.12, mutationSigma: 0.22, batchSize: 20 };
 let population = [], generation = 0, totalSimulations = 0, totalSubmitted = 0, isRunning = false, localBestFitness = -Infinity, lastFpsTime = 0, simsSinceLastFps = 0, lastServerSubmitTime = 0;
 
 function log(msg, cls) {
@@ -341,7 +341,7 @@ function evolve() {
 let evalIndex = 0;
 async function runBatch() {
   if (!isRunning) return;
-  const bSize = 8, end = Math.min(evalIndex + bSize, population.length);
+  const bSize = CONFIG.batchSize, end = Math.min(evalIndex + bSize, population.length);
   for (let i = evalIndex; i < end; i++) {
     await new Promise(resolve => setTimeout(() => {
       const result = evaluateNetwork(population[i]);
@@ -448,10 +448,15 @@ async function startFastTraining() {
 function stopFastTraining() { isRunning = false; document.getElementById('startBtn').disabled = false; document.getElementById('stopBtn').disabled = true; log('Training stopped.'); }
 
 async function submitBest() {
-  if (generation % 10 !== 0) return;
-  const now = Date.now(); if (now - lastServerSubmitTime < 60000) return; lastServerSubmitTime = now;
-  population.sort((a, b) => b.fitness - a.fitness); const toSubmit = population.slice(0, 10).filter(n => (n.levelsCleared || 0) > 0);
-  if (toSubmit.length === 0) { log(`Gen ${generation}: No level clears found — skipping server submission`, 'warn'); return; }
+  const isLocal = currentServerUrl.includes('localhost') || currentServerUrl.includes('127.0.0.1');
+  const submitEveryXGens = isLocal ? 3 : 10;
+  const throttleMs = isLocal ? 10000 : 60000;
+  const submitCount = isLocal ? 15 : 10;
+
+  if (generation % submitEveryXGens !== 0) return;
+  const now = Date.now(); if (now - lastServerSubmitTime < throttleMs) return; lastServerSubmitTime = now;
+  population.sort((a, b) => b.fitness - a.fitness); const toSubmit = population.slice(0, submitCount).filter(n => (n.levelsCleared || 0) > 0 || n.fitness > 1000);
+  if (toSubmit.length === 0) { log(`Gen ${generation}: No qualifying networks — skipping server submission`, 'warn'); return; }
   try {
     const resp = await fetch(currentServerUrl + '/api/networks', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

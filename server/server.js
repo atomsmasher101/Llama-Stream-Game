@@ -26,6 +26,7 @@ app.use(express.json({ limit: '10mb' }));
 
 let testedNetworks = [];
 let untestedNetworks = [];
+let needsWrite = false;
 
 function isValidNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -118,16 +119,29 @@ function sortCollections() {
   untestedNetworks.sort((a, b) => getUntestedScore(b) - getUntestedScore(a));
 }
 
-function saveNetworks() {
+function saveNetworksSync() {
   try {
     const payload = {
       testedNetworks,
       untestedNetworks,
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2));
+    console.log(`[Disk] Data persisted: ${testedNetworks.length} tested, ${untestedNetworks.length} untested.`);
   } catch (err) {
     console.error('Error saving networks:', err.message);
   }
+}
+
+// Background write loop to fix the I/O bottleneck
+setInterval(() => {
+  if (needsWrite) {
+    saveNetworksSync();
+    needsWrite = false;
+  }
+}, 5000);
+
+function saveNetworks() {
+  needsWrite = true;
 }
 
 function splitAndNormalizeNetworks(items) {
