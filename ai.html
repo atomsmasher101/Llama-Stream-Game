@@ -57,6 +57,8 @@
   <div>LIVES: <span id="livesDisplay">3</span></div>
   <div>LEVEL: <span id="levelDisplay">1</span></div>
   <div>⏱ <span id="timerDisplay">1:00</span></div>
+  <div>SPEED: <span id="speedDisplay" style="color:#0f0">1x</span></div>
+  <div>GFX: <span id="gfxDisplay" style="color:#0f0">Standard</span></div>
   <div>AMMO: <span id="ammoDisplay">🔫—</span></div>
   <div>SQUASHIE: <span id="squashieDisplay">🍬—</span></div>
   <div>WIG: <span id="wigDisplay">👶—</span></div>
@@ -282,12 +284,14 @@ function updateHUD(){document.getElementById('scoreDisplay').textContent=score;d
 const _pageTitle=document.getElementById('title');
 function showOverlay(title,sub,cta){overlay.style.display='flex';overlay.innerHTML=`<h2>${title}</h2><p>${sub||''}</p>${cta?`<p class="blink">${cta}</p>`:''}`;if(_pageTitle)_pageTitle.style.visibility='hidden';}
 function hideOverlay(){overlay.style.display='none';if(_pageTitle)_pageTitle.style.visibility='visible';}
-document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&state==='playing'){e.preventDefault();trySpit();}if((e.code==='KeyG'||e.code==='KeyF')&&state==='playing'){tryShoot();}if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();});
-document.addEventListener('keyup',e=>{keys[e.code]=false;});
-function bindTouchBtn(id,keyCode,onPress){const btn=document.getElementById(id);if(!btn)return;const press=(e)=>{e.preventDefault();btn.classList.add('pressed');if(onPress){onPress();return;}keys[keyCode]=true;};const release=(e)=>{e.preventDefault();btn.classList.remove('pressed');if(!onPress)keys[keyCode]=false;};btn.addEventListener('touchstart',press,{passive:false});btn.addEventListener('touchend',release,{passive:false});btn.addEventListener('touchcancel',release,{passive:false});btn.addEventListener('mousedown',press);btn.addEventListener('mouseup',release);btn.addEventListener('mouseleave',release);}
-bindTouchBtn('btn-left','ArrowLeft');bindTouchBtn('btn-right','ArrowRight');bindTouchBtn('btn-jump','ArrowUp');
-bindTouchBtn('btn-spit',null,()=>{if(state==='playing')trySpit();});
-bindTouchBtn('btn-shoot',null,()=>{if(state==='playing')tryShoot();});
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyM')toggleMute();
+  if(e.code==='KeyS')toggleSpeed();
+  if(e.code==='KeyD')toggleGFX();
+  if(e.code==='Escape'){e.preventDefault();if(state==='playing'||state==='dead'){paused?closeEscMenu():openEscMenu();}else if(paused){closeEscMenu();}}
+  if(e.code==='Enter'&&paused)closeEscMenu();
+});
+function bindTouchBtn(id,keyCode,onPress){/* Removed manual controls */}
 let muted=false,volume=0.06;
 function toggleMute(){muted=!muted;Music.setVolume(muted?0:volume);const btn=document.getElementById('btn-mute');const eBtn=document.getElementById('escMute');if(btn)btn.textContent=muted?'🔇':'🔊';if(eBtn)eBtn.textContent=muted?'🔇 UNMUTE':'🔊 MUTE';}
 document.addEventListener('keydown',e=>{if(e.code==='KeyM')toggleMute();});
@@ -382,7 +386,22 @@ function update(){
 }
 function updateParticles(){for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vy+=0.2;p.life--;if(p.life<=0)particles.splice(i,1);}}
 
+function drawSimple(){
+  ctx.fillStyle='#050510';ctx.fillRect(0,0,W,H);
+  if(!lvlData)return;
+  const{platforms,hazards,enemies,coins,flag,spits}=lvlData;
+  ctx.fillStyle='#333366';for(const p of platforms)ctx.fillRect(p.x,p.y,p.w,p.h);
+  ctx.fillStyle='#ff0000';for(const h of hazards)ctx.fillRect(h.x,h.y,h.w,h.h);
+  ctx.fillStyle='#ffff00';for(const c of coins)if(!c.collected)ctx.beginPath(),ctx.arc(c.x+7,c.y+7,5,0,Math.PI*2),ctx.fill();
+  ctx.fillStyle='#00ff00';ctx.fillRect(flag.x,flag.y,flag.w,flag.h);
+  for(const e of enemies){if(e.dead)continue;ctx.fillStyle=e.type==='jimmy'?'#ff00ff':e.type==='volanradooga'?'#00ffff':'#ff4400';ctx.fillRect(e.x,e.y,e.w,e.h);}
+  ctx.fillStyle='#ffffff';ctx.fillRect(llama.x,llama.y,llama.w,llama.h);
+  ctx.fillStyle='#39ff14';for(const s of spits)ctx.fillRect(s.x,s.y,s.w,s.h);
+  ctx.fillStyle='#fff8aa';for(const b of lvlData.bullets)ctx.fillRect(b.x,b.y,b.w,b.h);
+}
+
 function draw(){
+  if(simplifiedDraw){drawSimple();return;}
   ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,W,H);
   const shake=screenShake>0?(Math.random()-0.5)*screenShake*0.5:0;
   ctx.save();ctx.translate(shake,shake*0.5);
@@ -428,6 +447,30 @@ function drawVolanRadooga(e){const cx=e.x+e.w/2,cy=e.y+e.h/2;const isAggro=e.sta
 function drawGinger(e){const x=e.x,y=e.y,w=e.w,h=e.h,t=e.floatTimer,wingFlap=Math.sin(t*4)*18;ctx.save();ctx.translate(x+w/2,y+h/2);ctx.fillStyle='rgba(255,160,50,0.85)';ctx.save();ctx.rotate((-30+wingFlap)*Math.PI/180);ctx.beginPath();ctx.ellipse(-18,-6,18,8,-0.4,0,Math.PI*2);ctx.fill();ctx.restore();ctx.save();ctx.rotate((30-wingFlap)*Math.PI/180);ctx.fillStyle='rgba(255,160,50,0.85)';ctx.beginPath();ctx.ellipse(18,-6,18,8,0.4,0,Math.PI*2);ctx.fill();ctx.restore();ctx.fillStyle='#c8520a';ctx.beginPath();ctx.ellipse(0,0,15,14,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#ffe8cc';ctx.lineWidth=1.5;ctx.beginPath();ctx.ellipse(0,0,9,8,0,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#e8440a';for(let i=-2;i<=2;i++){ctx.beginPath();ctx.moveTo(i*5-2,-13);ctx.lineTo(i*5,-13-7-Math.abs(i)*2);ctx.lineTo(i*5+2,-13);ctx.closePath();ctx.fill();}ctx.fillStyle='#7a2a00';ctx.beginPath();ctx.arc(-5,2,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(5,2,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(-8,-2,1.5,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(8,-2,1.5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-5,-3,4,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(5,-3,4,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a1a00';ctx.beginPath();ctx.arc(-5,-3,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(5,-3,2,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-4,-4,1,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(6,-4,1,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#5a1a00';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-5,5);ctx.quadraticCurveTo(0,10,5,5);ctx.stroke();ctx.strokeStyle='#e8440a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-8,-7);ctx.lineTo(-3,-5);ctx.stroke();ctx.beginPath();ctx.moveTo(8,-7);ctx.lineTo(3,-5);ctx.stroke();ctx.restore();}
 function drawJimmy(e){const x=e.x,y=e.y,w=e.w,h=e.h,t=e.twerk,sc=e.scale||1;const hipSwing=Math.sin(t*2)*10,bodySwing=Math.sin(t*2+Math.PI)*6;ctx.save();ctx.translate(x+w/2,y+h);ctx.scale(sc,sc);ctx.save();ctx.rotate(hipSwing*Math.PI/180);ctx.fillStyle=rb(frameCount*2+60);ctx.beginPath();ctx.ellipse(0,-18,34,26,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=rbLight(frameCount*2+100);ctx.beginPath();ctx.ellipse(-8,-22,14,10,-0.3,0,Math.PI*2);ctx.fill();ctx.fillStyle=rb(frameCount*2+80);ctx.fillRect(-26,-32,52,32);const legL=Math.sin(t*2)*8,legR=-legL;ctx.fillStyle=rb(frameCount*2+40);ctx.save();ctx.translate(-12,0);ctx.rotate(legL*Math.PI/180);ctx.fillRect(-6,0,12,20);ctx.fillStyle=rbDark(frameCount*2+60);ctx.fillRect(-8,18,18,8);ctx.restore();ctx.save();ctx.translate(12,0);ctx.rotate(legR*Math.PI/180);ctx.fillStyle=rb(frameCount*2+40);ctx.fillRect(-6,0,12,20);ctx.fillStyle=rbDark(frameCount*2+60);ctx.fillRect(-10,18,18,8);ctx.restore();ctx.restore();ctx.save();ctx.rotate(bodySwing*Math.PI/180);ctx.fillStyle=rb(frameCount*2+160);ctx.fillRect(-18,-62,36,36);ctx.fillStyle=rbLight(frameCount*2+200);ctx.beginPath();ctx.ellipse(0,-50,10,7,0,0,Math.PI*2);ctx.fill();const armSwing=Math.sin(t*2)*30;ctx.fillStyle=rb(frameCount*2+120);ctx.save();ctx.translate(-18,-52);ctx.rotate((-40+armSwing)*Math.PI/180);ctx.fillRect(-5,0,10,22);ctx.fillStyle=rb(frameCount*2+140);ctx.beginPath();ctx.arc(0,22,7,0,Math.PI*2);ctx.fill();ctx.restore();ctx.save();ctx.translate(18,-52);ctx.rotate((40-armSwing)*Math.PI/180);ctx.fillStyle=rb(frameCount*2+120);ctx.fillRect(-5,0,10,22);ctx.fillStyle=rb(frameCount*2+140);ctx.beginPath();ctx.arc(0,22,7,0,Math.PI*2);ctx.fill();ctx.restore();ctx.fillStyle=rb(frameCount*2+200);ctx.beginPath();ctx.ellipse(0,-72,22,18,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffff00';ctx.beginPath();ctx.arc(-10,-80,9,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(10,-80,9,0,Math.PI*2);ctx.fill();ctx.fillStyle='#000';ctx.beginPath();ctx.arc(-10,-80,5,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(10,-80,5,0,Math.PI*2);ctx.fill();ctx.restore();if(e.nameTag){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-25,-105,50,12);ctx.fillStyle='#fff';ctx.font='8px "VT323",monospace';ctx.textAlign='center';ctx.fillText("JIMMY",0,-96);}const hpW=40*sc,hpH=5*sc;ctx.fillStyle='#440000';ctx.fillRect(-hpW/2,-115*sc,hpW,hpH);ctx.fillStyle='#00ff44';ctx.fillRect(-hpW/2,-115*sc,hpW*(e.hp/e.maxHp),hpH);ctx.restore();}
 
+let timeScale = 1, simplifiedDraw = false;
+function toggleSpeed() {
+  const speeds = [1, 2, 5, 10, 20];
+  const idx = speeds.indexOf(timeScale);
+  timeScale = speeds[(idx + 1) % speeds.length];
+  const display = document.getElementById('speedDisplay');
+  if (display) {
+    display.textContent = timeScale + 'x';
+    display.style.color = timeScale > 1 ? (timeScale > 5 ? '#ff4444' : '#ffaa00') : '#0f0';
+  }
+}
+function toggleGFX() {
+  simplifiedDraw = !simplifiedDraw;
+  const display = document.getElementById('gfxDisplay');
+  if (display) {
+    display.textContent = simplifiedDraw ? 'Simple' : 'Standard';
+    display.style.color = simplifiedDraw ? '#ffaa00' : '#0f0';
+  }
+}
+document.addEventListener('keydown', e => { 
+  if (e.code === 'KeyS') toggleSpeed(); 
+  if (e.code === 'KeyD') toggleGFX();
+});
+
 const FIXED_DT=1/60,MAX_DELTA=0.1;
 let _lastTrack='',_lastTime=-1,_accumulator=0;
 function loop(timestamp){
@@ -437,7 +480,18 @@ function loop(timestamp){
   const delta=Math.min(rawDelta,MAX_DELTA);
   if(paused)return;
   _accumulator+=delta;
-  if(_accumulator>=FIXED_DT){update();_accumulator-=FIXED_DT;if(_accumulator>FIXED_DT)_accumulator=FIXED_DT*0.5;}
+  
+  // Apply timeScale by running multiple updates
+  let updatesThisFrame = 0;
+  while(_accumulator >= FIXED_DT && updatesThisFrame < timeScale) {
+    update();
+    _accumulator -= FIXED_DT;
+    updatesThisFrame++;
+  }
+  
+  // If we're falling behind due to high timeScale, cap the accumulator
+  if(_accumulator > FIXED_DT) _accumulator = FIXED_DT * 0.5;
+
   draw();
   if(state==='playing'){const t=getTrackForState();if(t!==_lastTrack){_lastTrack=t;Music.play(t);}}else if(state!=='dead'){_lastTrack='';}
 }
