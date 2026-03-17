@@ -578,6 +578,12 @@ const AI={
 
   getUntestedServerCandidates(){return this.population.filter(n=>n.fromServer&&n.producer==='fast_trainer'&&(n.aiEvaluations||0)===0).sort((a,b)=>(b.fitness||0)-(a.fitness||0));},
 
+  getLocalGeneratedCandidates(){
+    return this.population
+      .filter(n=>!n.fromServer)
+      .sort((a,b)=>(b.fitness||0)-(a.fitness||0));
+  },
+
   async acquireMoreNetworksIfNeeded(){
     if(!this.online||!this.currentUrl||this.networkAcquireInFlight)return;
     const isLocal = this.isLocal();
@@ -600,6 +606,14 @@ const AI={
     try{
       const finalScore = network.currentRunFitness || network.fitness;
       const resp=await fetch(`${url}/api/networks/${network.id}/score`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({score:finalScore,scorer:'ai.html',levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0})});
+      if(resp.status===404){
+        // The server no longer has this network ID (cleared/rotated).
+        // Re-submit the network as new so local training can continue.
+        network.id=undefined;
+        network.fromServer=false;
+        await this.submitNetwork(network);
+        return;
+      }
       if(resp.ok){
         const data=await resp.json();
         network.aiEvaluations=data.aiEvaluations||(network.aiEvaluations||0)+1;
@@ -743,9 +757,20 @@ const AI={
   RNG.reset(42);
   loadLevel();
   await AI.acquireMoreNetworksIfNeeded();
-  const populationSize=AI.population.length;const pendingEval=AI.getUntestedServerCandidates();
-  if(pendingEval.length>0 && Math.random() < 0.7){const selectionSize=Math.min(5,pendingEval.length);currentNetwork=pendingEval[Math.floor(Math.random()*selectionSize)];}
-  else{const selectionSize=Math.min(8,AI.population.length);currentNetwork=AI.population[Math.floor(Math.random()*selectionSize)];}
+  const pendingEval=AI.getUntestedServerCandidates();
+  const localGenerated=AI.getLocalGeneratedCandidates();
+  if(pendingEval.length>0 && Math.random() < 0.55){
+    const selectionSize=Math.min(5,pendingEval.length);
+    currentNetwork=pendingEval[Math.floor(Math.random()*selectionSize)];
+  }
+  else if(localGenerated.length>0 && Math.random() < 0.75){
+    const selectionSize=Math.min(6,localGenerated.length);
+    currentNetwork=localGenerated[Math.floor(Math.random()*selectionSize)];
+  }
+  else{
+    const selectionSize=Math.min(10,AI.population.length);
+    currentNetwork=AI.population[Math.floor(Math.random()*selectionSize)];
+  }
   AI.resetForNewRun(currentNetwork);
   state='playing';hideOverlay();updateHUD();aiFrames=0;
   }
