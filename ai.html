@@ -885,7 +885,7 @@ const AI={
         currentNetwork.fitness = currentNetwork.currentRunFitness;
     }
     AI.rememberTopNetwork(currentNetwork);
-    if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){AI.submitNetwork(currentNetwork.clone());}
+    if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){const submissionCandidate=currentNetwork.clone();submissionCandidate.currentRunFitness=currentNetwork.currentRunFitness;AI.submitNetwork(submissionCandidate);}
     AI.submitEvaluation(currentNetwork);
     startGameForAI(1);
   }
@@ -897,7 +897,7 @@ const AI={
   update=function(){
   if(AI.active){
     updateAI();reconnectCounter++;if(reconnectCounter>600&&!AI.online){reconnectCounter=0;AI.reconnect();}
-    if((state==='dead'||state==='gameover') && !AI.restartTimer){AI.restartTimer=30;if(currentNetwork&&currentNetwork.fitness>100){AI.submitNetwork(currentNetwork.clone());}if(currentNetwork)AI.submitEvaluation(currentNetwork);}
+    if((state==='dead'||state==='gameover') && !AI.restartTimer){AI.restartTimer=30;if(currentNetwork&&currentNetwork.fitness>100){const submissionCandidate=currentNetwork.clone();submissionCandidate.currentRunFitness=currentNetwork.currentRunFitness;AI.submitNetwork(submissionCandidate);}if(currentNetwork)AI.submitEvaluation(currentNetwork);}
     if(AI.restartTimer){AI.restartTimer--;if(AI.restartTimer<=0){AI.restartTimer=null;hideOverlay();startGameForAI(1);}return;}
   }
   originalUpdate();
