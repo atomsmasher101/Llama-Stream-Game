@@ -399,7 +399,15 @@
     <p class="esc-hint">ESC or ENTER to resume</p>
   </div>
 </div>
-
+<script>
+(() => {
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const sharedBasePath = isLocalHost ? '/shared' : '/server/shared';
+  for (const file of ['constants', 'neural-network', 'physics', 'level-generator']) {
+    document.write(`<script src="${sharedBasePath}/${file}.js"><\/script>`);
+  }
+})();
+</script>
 <script>
 const canvas = document.getElementById('gameCanvas');
 // alpha:false → skip per-pixel alpha compositing (background is always drawn solid)
@@ -3458,59 +3466,6 @@ function loop(timestamp) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NEURAL NETWORK AI FOR LEVEL 5 - NEURO-EVOLUTION
-// ═══════════════════════════════════════════════════════════════════════════
-
-class NeuralNetwork {
-  constructor(inputSize, hiddenSize, outputSize) {
-    this.inputSize = inputSize;
-    this.hiddenSize = hiddenSize;
-    this.outputSize = outputSize;
-    
-    // Weights
-    this.w1 = new Float32Array(inputSize * hiddenSize);
-    this.w2 = new Float32Array(hiddenSize * outputSize);
-    this.b1 = new Float32Array(hiddenSize);
-    this.b2 = new Float32Array(outputSize);
-    
-    this.randomize();
-  }
-  
-  randomize() {
-    for (let i = 0; i < this.w1.length; i++) this.w1[i] = (Math.random() * 2 - 1) * 0.5;
-    for (let i = 0; i < this.w2.length; i++) this.w2[i] = (Math.random() * 2 - 1) * 0.5;
-    for (let i = 0; i < this.b1.length; i++) this.b1[i] = (Math.random() * 2 - 1) * 0.2;
-    for (let i = 0; i < this.b2.length; i++) this.b2[i] = (Math.random() * 2 - 1) * 0.2;
-  }
-  
-  clone() {
-    const nn = new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize);
-    nn.w1.set(this.w1);
-    nn.w2.set(this.w2);
-    nn.b1.set(this.b1);
-    nn.b2.set(this.b2);
-    nn.fitness = this.fitness || 0;
-    nn.deaths = this.deaths || 0;
-    nn.levelsCompleted = this.levelsCompleted || 0;
-    nn.enemiesKilled = this.enemiesKilled || 0;
-    return nn;
-  }
-  
-  mutate(rate) {
-    const mutateVal = (v) => {
-      if (Math.random() < rate) return v + (Math.random() * 2 - 1) * 0.3;
-      return v;
-    };
-    for (let i = 0; i < this.w1.length; i++) this.w1[i] = mutateVal(this.w1[i]);
-    for (let i = 0; i < this.w2.length; i++) this.w2[i] = mutateVal(this.w2[i]);
-    for (let i = 0; i < this.b1.length; i++) this.b1[i] = mutateVal(this.b1[i]);
-    for (let i = 0; i < this.b2.length; i++) this.b2[i] = mutateVal(this.b2[i]);
-  }
-  
-  forward(inputs){this.hidden=new Float32Array(this.hiddenSize);this.output=new Float32Array(this.outputSize);for(let i=0;i<this.hiddenSize;i++){let sum=this.b1[i];for(let j=0;j<this.inputSize;j++)sum+=inputs[j]*this.w1[j*this.hiddenSize+i];this.hidden[i]=Math.tanh(sum);}for(let i=0;i<this.outputSize;i++){let sum=this.b2[i];for(let j=0;j<this.hiddenSize;j++)sum+=this.hidden[j]*this.w2[j*this.outputSize+i];this.output[i]=Math.tanh(sum);}return this.output;}
-}
-
 const AI={
   population:[],bestNetwork:null,generation:0,active:false,pausedForAI:false,
   inputSize:52,hiddenSize:48,outputSize:6,
@@ -3532,7 +3487,7 @@ const AI={
       try{
         const networkData=JSON.parse(decodeURIComponent(replayData));
         this.replayMode=true;
-        this.replayNetwork=new NeuralNetwork(this.inputSize,networkData.hiddenSize||48,this.outputSize);
+        this.replayNetwork=new window.LlamaShared.NeuralNetwork(this.inputSize,networkData.hiddenSize||48,this.outputSize);
         this.replayNetwork.w1.set(networkData.w1);this.replayNetwork.w2.set(networkData.w2);this.replayNetwork.b1.set(networkData.b1);this.replayNetwork.b2.set(networkData.b2);
         this.replayNetwork.fitness=networkData.fitness;this.replayNetwork.id=networkData.id;
         this.replayNetwork.actionProfile=networkData.actionProfile||'full6';
@@ -3561,7 +3516,7 @@ const AI={
         if(data.networks){
           for(const netData of data.networks){
             try{
-              const net=new NeuralNetwork(this.inputSize,netData.hiddenSize||48,this.outputSize);
+              const net=new window.LlamaShared.NeuralNetwork(this.inputSize,netData.hiddenSize||48,this.outputSize);
               net.w1.set(netData.w1);net.w2.set(netData.w2);net.b1.set(netData.b1);net.b2.set(netData.b2);
               net.fitness=netData.fitness;net.id=netData.id;net.producer=netData.producer;net.actionProfile=netData.actionProfile;
               this.population.push(net);

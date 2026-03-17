@@ -881,9 +881,7 @@ const AI={
   }
   else{
     currentNetwork.alive=false;
-    if(currentNetwork.currentRunFitness > currentNetwork.fitness) {
-        currentNetwork.fitness = currentNetwork.currentRunFitness;
-    }
+    currentNetwork.fitness = currentNetwork.currentRunFitness;
     AI.rememberTopNetwork(currentNetwork);
     if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){const submissionCandidate=currentNetwork.clone();submissionCandidate.currentRunFitness=currentNetwork.currentRunFitness;AI.submitNetwork(submissionCandidate);}
     AI.submitEvaluation(currentNetwork);

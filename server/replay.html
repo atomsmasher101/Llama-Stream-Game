@@ -399,7 +399,15 @@
     <p class="esc-hint">ESC or ENTER to resume</p>
   </div>
 </div>
-
+<script>
+(() => {
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const sharedBasePath = isLocalHost ? '/shared' : '/server/shared';
+  for (const file of ['constants', 'neural-network', 'physics', 'level-generator']) {
+    document.write(`<script src="${sharedBasePath}/${file}.js"><\/script>`);
+  }
+})();
+</script>
 <script>
 const canvas = document.getElementById('gameCanvas');
 // alpha:false → skip per-pixel alpha compositing (background is always drawn solid)
@@ -3455,97 +3463,6 @@ function loop(timestamp) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NEURAL NETWORK AI FOR LEVEL 5 - NEURO-EVOLUTION
-// ═══════════════════════════════════════════════════════════════════════════
-
-class NeuralNetwork {
-  constructor(inputSize, hiddenSize, outputSize) {
-    this.inputSize = inputSize;
-    this.hiddenSize = hiddenSize;
-    this.outputSize = outputSize;
-    
-    // Weights
-    this.w1 = new Float32Array(inputSize * hiddenSize);
-    this.w2 = new Float32Array(hiddenSize * outputSize);
-    this.b1 = new Float32Array(hiddenSize);
-    this.b2 = new Float32Array(outputSize);
-    
-    this.randomize();
-  }
-  
-  randomize() {
-    for (let i = 0; i < this.w1.length; i++) this.w1[i] = (Math.random() * 2 - 1) * 0.5;
-    for (let i = 0; i < this.w2.length; i++) this.w2[i] = (Math.random() * 2 - 1) * 0.5;
-    for (let i = 0; i < this.b1.length; i++) this.b1[i] = (Math.random() * 2 - 1) * 0.2;
-    for (let i = 0; i < this.b2.length; i++) this.b2[i] = (Math.random() * 2 - 1) * 0.2;
-  }
-  
-  clone() {
-    const nn = new NeuralNetwork(this.inputSize, this.hiddenSize, this.outputSize);
-    nn.w1.set(this.w1);
-    nn.w2.set(this.w2);
-    nn.b1.set(this.b1);
-    nn.b2.set(this.b2);
-    nn.fitness = this.fitness || 0;
-    nn.deaths = this.deaths || 0;
-    nn.levelsCompleted = this.levelsCompleted || 0;
-    nn.enemiesKilled = this.enemiesKilled || 0;
-    nn.isExplorer = this.isExplorer || false;
-    return nn;
-  }
-  
-  mutate(rate, highVariance = false) {
-    const varianceMultiplier = highVariance ? 3.0 : 1.0;
-    const mutateVal = (v) => {
-      if (Math.random() < rate) {
-        // High variance mutation: larger changes, potentially completely random
-        if (highVariance && Math.random() < 0.2) {
-          // 20% chance of completely random reset for high variance
-          return (Math.random() * 2 - 1) * 0.5;
-        }
-        return v + (Math.random() * 2 - 1) * 0.3 * varianceMultiplier;
-      }
-      return v;
-    };
-    for (let i = 0; i < this.w1.length; i++) this.w1[i] = mutateVal(this.w1[i]);
-    for (let i = 0; i < this.w2.length; i++) this.w2[i] = mutateVal(this.w2[i]);
-    for (let i = 0; i < this.b1.length; i++) this.b1[i] = mutateVal(this.b1[i]);
-    for (let i = 0; i < this.b2.length; i++) this.b2[i] = mutateVal(this.b2[i]);
-  }
-  
-  sigmoid(x) {
-    return 1 / (1 + Math.exp(-Math.max(-500, Math.min(500, x))));
-  }
-  
-  relu(x) { return Math.max(0, x); }
-  
-  forward(inputs) {
-    this.hidden = new Float32Array(this.hiddenSize);
-    this.output = new Float32Array(this.outputSize);
-    
-    // Hidden layer
-    for (let i = 0; i < this.hiddenSize; i++) {
-      let sum = this.b1[i];
-      for (let j = 0; j < this.inputSize; j++) {
-        sum += inputs[j] * this.w1[j * this.hiddenSize + i];
-      }
-      this.hidden[i] = this.relu(sum);
-    }
-    
-    // Output layer (6 outputs: left, right, jump, jumpHeld, spit, shoot)
-    for (let i = 0; i < this.outputSize; i++) {
-      let sum = this.b2[i];
-      for (let j = 0; j < this.hiddenSize; j++) {
-        sum += this.hidden[j] * this.w2[j * this.outputSize + i];
-      }
-      this.output[i] = this.sigmoid(sum);
-    }
-    
-    return this.output;
-  }
-}
-
 const AI = {
   population: [],
   bestNetwork: null,
@@ -3563,7 +3480,7 @@ const AI = {
   init(populationSize = 40) {
     this.population = [];
     for (let i = 0; i < populationSize; i++) {
-      this.population.push(new NeuralNetwork(this.inputSize, 48, this.outputSize));
+      this.population.push(new window.LlamaShared.NeuralNetwork(this.inputSize, 48, this.outputSize));
     }
     this.generation = 0;
     this.active = true;
@@ -3604,7 +3521,7 @@ const AI = {
       }
       
       console.log('Replay mode: Loading network', networkData.id?.substring(0, 8));
-      this.replayNetwork = new NeuralNetwork(this.inputSize, networkData.hiddenSize || 48, this.outputSize);
+      this.replayNetwork = new window.LlamaShared.NeuralNetwork(this.inputSize, networkData.hiddenSize || 48, this.outputSize);
       
       if (this.replayNetwork.w1.length !== networkData.w1.length || 
           this.replayNetwork.w2.length !== networkData.w2.length ||
@@ -3718,7 +3635,7 @@ const AI = {
           // Add server networks to population (replacing worst)
           for (const netData of data.networks) {
             try {
-              const net = new NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
+              const net = new window.LlamaShared.NeuralNetwork(this.inputSize, netData.hiddenSize || 48, this.outputSize);
               
               // Check if sizes match before setting
               if (net.w1.length !== netData.w1?.length || 
