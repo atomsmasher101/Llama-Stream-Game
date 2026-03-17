@@ -640,7 +640,8 @@ const AI={
 
     const url=this.currentUrl||this.serverUrl;
     try{
-      const finalScore = network.currentRunFitness || network.fitness;
+      const hasRunFitness = Number.isFinite(network.currentRunFitness);
+      const finalScore = hasRunFitness ? network.currentRunFitness : (Number.isFinite(network.fitness) ? network.fitness : 0);
       const resp=await fetch(`${url}/api/networks/${network.id}/score`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({score:finalScore,scorer:'ai.html',levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0})});
       if(resp.status===404){
         // The server no longer has this network ID (cleared/rotated).
@@ -667,7 +668,8 @@ const AI={
     const throttle = isLocal ? 5000 : 60000; // 5s if local, 60s if remote
     setTimeout(()=>{this.submitReady=true;}, throttle);
     try{
-      const finalFitness = network.currentRunFitness || network.fitness;
+      const hasRunFitness = Number.isFinite(network.currentRunFitness);
+      const finalFitness = hasRunFitness ? network.currentRunFitness : (Number.isFinite(network.fitness) ? network.fitness : 0);
       const resp=await fetch(url+'/api/networks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({networks:[{id:network.id||undefined,fitness:finalFitness,hiddenSize:this.hiddenSize,w1:Array.from(network.w1),w2:Array.from(network.w2),b1:Array.from(network.b1),b2:Array.from(network.b2),producer:"ai",actionProfile:"full6",trainingStats:{levelsCompleted:network.levelsCompleted||0,levelFullClears:network.levelFullClears||0}}]})});
     }catch(e){}
   },
@@ -883,7 +885,7 @@ const AI={
         currentNetwork.fitness = currentNetwork.currentRunFitness;
     }
     AI.rememberTopNetwork(currentNetwork);
-    if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){AI.submitNetwork(currentNetwork.clone());}
+    if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){const submissionCandidate=currentNetwork.clone();submissionCandidate.currentRunFitness=currentNetwork.currentRunFitness;AI.submitNetwork(submissionCandidate);}
     AI.submitEvaluation(currentNetwork);
     startGameForAI(1);
   }
@@ -895,7 +897,7 @@ const AI={
   update=function(){
   if(AI.active){
     updateAI();reconnectCounter++;if(reconnectCounter>600&&!AI.online){reconnectCounter=0;AI.reconnect();}
-    if((state==='dead'||state==='gameover') && !AI.restartTimer){AI.restartTimer=30;if(currentNetwork&&currentNetwork.fitness>100){AI.submitNetwork(currentNetwork.clone());}if(currentNetwork)AI.submitEvaluation(currentNetwork);}
+    if((state==='dead'||state==='gameover') && !AI.restartTimer){AI.restartTimer=30;if(currentNetwork&&currentNetwork.fitness>100){const submissionCandidate=currentNetwork.clone();submissionCandidate.currentRunFitness=currentNetwork.currentRunFitness;AI.submitNetwork(submissionCandidate);}if(currentNetwork)AI.submitEvaluation(currentNetwork);}
     if(AI.restartTimer){AI.restartTimer--;if(AI.restartTimer<=0){AI.restartTimer=null;hideOverlay();startGameForAI(1);}return;}
   }
   originalUpdate();
