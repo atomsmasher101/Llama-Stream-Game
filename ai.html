@@ -486,7 +486,7 @@ const AI={
   serverUrl: window.LlamaRuntimeConfig?.serverBase || window.location.origin,
   remoteUrl: window.LlamaRuntimeConfig?.defaultRemoteOrigin || 'https://llamagame-ai-server.wascomb.com',
   online:false,submitReady:true,networkAcquireInFlight:false,lastNetworkAcquireMs:0,
-  lastServerFetchTime:0,
+  lastServerFetchTime:0,topNetworkMemory:[],topNetworkMemoryLimit:40,
 
   async init(populationSize=30){
     this.population=[];
@@ -576,7 +576,43 @@ const AI={
     }catch(e){}
   },
 
-  getUntestedServerCandidates(){return this.population.filter(n=>n.fromServer&&n.producer==='fast_trainer'&&(n.aiEvaluations||0)===0).sort((a,b)=>(b.fitness||0)-(a.fitness||0));},
+  getUntestedServerCandidates(){return this.population.filter(n=>n.fromServer&&(n.aiEvaluations||0)===0).sort((a,b)=>(b.fitness||0)-(a.fitness||0));},
+
+  rememberTopNetwork(network){
+    if(!network)return;
+    const snapshot=network.clone();
+    snapshot.id=undefined;
+    snapshot.fromServer=false;
+    snapshot.aiEvaluations=0;
+    snapshot.producer='ai_memory';
+    snapshot.sourceProducer=network.producer||'unknown';
+    snapshot.fitness=Math.max(network.currentRunFitness||0,network.fitness||0);
+    this.topNetworkMemory.push(snapshot);
+    this.topNetworkMemory.sort((a,b)=>(b.fitness||0)-(a.fitness||0));
+    if(this.topNetworkMemory.length>this.topNetworkMemoryLimit)this.topNetworkMemory=this.topNetworkMemory.slice(0,this.topNetworkMemoryLimit);
+  },
+
+  createMutatedNetwork(seed,{rate=0.12,highVariance=false,dropServerIdentity=true}={}){
+    if(!seed)return null;
+    const child=seed.clone();
+    child.mutate(rate,highVariance);
+    if(dropServerIdentity){
+      child.id=undefined;
+      child.fromServer=false;
+      child.aiEvaluations=0;
+    }
+    child.producer='ai';
+    child.parentProducer=seed.producer||seed.sourceProducer||'unknown';
+    return child;
+  },
+
+  registerCandidate(network){
+    if(!network)return;
+    this.population.push(network);
+    this.population.sort((a,b)=>(b.fitness||0)-(a.fitness||0));
+    const maxPop=this.isLocal()?220:120;
+    if(this.population.length>maxPop)this.population=this.population.slice(0,maxPop);
+  },
 
   getLocalGeneratedCandidates(){
     return this.population
@@ -759,17 +795,37 @@ const AI={
   await AI.acquireMoreNetworksIfNeeded();
   const pendingEval=AI.getUntestedServerCandidates();
   const localGenerated=AI.getLocalGeneratedCandidates();
-  if(pendingEval.length>0 && Math.random() < 0.55){
-    const selectionSize=Math.min(5,pendingEval.length);
-    currentNetwork=pendingEval[Math.floor(Math.random()*selectionSize)];
+  const memoryCandidates=AI.topNetworkMemory;
+  const hasThinServerSupply=pendingEval.length<4;
+  if(pendingEval.length>0 && Math.random() < 0.65){
+    const selectionSize=Math.min(8,pendingEval.length);
+    const seed=pendingEval[Math.floor(Math.random()*selectionSize)];
+    const mutateServerSeed=Math.random()<0.75;
+    currentNetwork=mutateServerSeed?AI.createMutatedNetwork(seed,{rate:0.1,highVariance:false}):seed;
+    if(currentNetwork!==seed)AI.registerCandidate(currentNetwork);
+  }
+  else if(hasThinServerSupply && memoryCandidates.length>0 && Math.random() < 0.85){
+    const selectionSize=Math.min(10,memoryCandidates.length);
+    const seed=memoryCandidates[Math.floor(Math.random()*selectionSize)];
+    currentNetwork=AI.createMutatedNetwork(seed,{rate:0.14,highVariance:true});
+    AI.registerCandidate(currentNetwork);
   }
   else if(localGenerated.length>0 && Math.random() < 0.75){
     const selectionSize=Math.min(6,localGenerated.length);
-    currentNetwork=localGenerated[Math.floor(Math.random()*selectionSize)];
+    const seed=localGenerated[Math.floor(Math.random()*selectionSize)];
+    currentNetwork=AI.createMutatedNetwork(seed,{rate:0.1,highVariance:false,dropServerIdentity:false})||seed;
+    if(currentNetwork!==seed)AI.registerCandidate(currentNetwork);
   }
   else{
-    const selectionSize=Math.min(10,AI.population.length);
-    currentNetwork=AI.population[Math.floor(Math.random()*selectionSize)];
+    const seedPool=[...pendingEval.slice(0,6),...memoryCandidates.slice(0,6),...AI.population.slice(0,8)].filter(Boolean);
+    if(seedPool.length>0){
+      const seed=seedPool[Math.floor(Math.random()*seedPool.length)];
+      currentNetwork=AI.createMutatedNetwork(seed,{rate:0.18,highVariance:true})||seed;
+      if(currentNetwork!==seed)AI.registerCandidate(currentNetwork);
+    }else{
+      currentNetwork=new NeuralNetwork(AI.inputSize,AI.hiddenSize,AI.outputSize);
+      AI.registerCandidate(currentNetwork);
+    }
   }
   AI.resetForNewRun(currentNetwork);
   state='playing';hideOverlay();updateHUD();aiFrames=0;
@@ -826,13 +882,14 @@ const AI={
     if(currentNetwork.currentRunFitness > currentNetwork.fitness) {
         currentNetwork.fitness = currentNetwork.currentRunFitness;
     }
+    AI.rememberTopNetwork(currentNetwork);
     if(currentNetwork.fitness>100&&((currentNetwork.levelsCompleted||0)>=1||currentNetwork.reachedFlag||currentNetwork.fitness>500)){AI.submitNetwork(currentNetwork.clone());}
     AI.submitEvaluation(currentNetwork);
     startGameForAI(1);
   }
   }
 
-  function showAIDebug(){const hud=document.getElementById('hud');const serverStatus=AI.online?'🟢 ONLINE':'🔴 OFFLINE';const networkInfo=`${AI.population.indexOf(currentNetwork)+1}/${AI.population.length}`;const explorerStatus=currentNetwork.isExplorer?'🔍 EXPLORER':'⚙️  EXPLOITER';hud.innerHTML=`<div>MODE: TRAINING</div><div>GEN: ${AI.generation}</div><div>NETWORK: ${networkInfo} ${explorerStatus}</div><div>LEVEL: ${currentNetwork.levelsCompleted}/5</div><div>FITNESS: ${(currentNetwork.currentRunFitness||0).toFixed(0)}</div><div>SERVER: ${serverStatus}</div><div>SCORE: ${score}</div><div>FRAMES: ${aiFrames}</div>`;hud.style.color=currentNetwork.isExplorer?'#ffaa00':'#0f0';}
+  function showAIDebug(){const hud=document.getElementById('hud');const serverStatus=AI.online?'🟢 ONLINE':'🔴 OFFLINE';const idx=AI.population.indexOf(currentNetwork);const networkInfo=`${idx>=0?idx+1:'*'}/${AI.population.length}`;const explorerStatus=currentNetwork.isExplorer?'🔍 EXPLORER':'⚙️  EXPLOITER';hud.innerHTML=`<div>MODE: TRAINING</div><div>GEN: ${AI.generation}</div><div>NETWORK: ${networkInfo} ${explorerStatus}</div><div>LEVEL: ${currentNetwork.levelsCompleted}/5</div><div>FITNESS: ${(currentNetwork.currentRunFitness||0).toFixed(0)}</div><div>SERVER: ${serverStatus}</div><div>MEMORY: ${AI.topNetworkMemory.length}</div><div>SCORE: ${score}</div><div>FRAMES: ${aiFrames}</div>`;hud.style.color=currentNetwork.isExplorer?'#ffaa00':'#0f0';}
 
   const originalUpdate=update;let reconnectCounter=0;
   update=function(){
