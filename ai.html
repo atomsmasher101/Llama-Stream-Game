@@ -117,10 +117,30 @@
     <p class="esc-hint">ESC or ENTER to resume</p>
   </div>
 </div>
-<script src="/shared/constants.js"></script>
-<script src="/shared/neural-network.js"></script>
-<script src="/shared/physics.js"></script>
-<script src="/shared/level-generator.js"></script>
+<script>
+(() => {
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const sharedBasePath = isLocalHost ? '/shared' : '/server/shared';
+  for (const file of ['constants', 'neural-network', 'physics', 'level-generator']) {
+    document.write(`<script src="${sharedBasePath}/${file}.js"><\/script>`);
+  }
+})();
+</script>
+<script>
+(() => {
+  const params = new URLSearchParams(window.location.search);
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const defaultRemoteOrigin = 'https://llamagame-ai-server.wascomb.com';
+  const defaultLocalOrigin = isLocalHost ? window.location.origin : 'http://localhost:3000';
+  const sanitize = (url) => (url || '').trim().replace(/\/$/, '');
+
+  window.LlamaRuntimeConfig = {
+    serverBase: sanitize(params.get('server') || defaultLocalOrigin),
+    defaultRemoteOrigin,
+    isLocalHost
+  };
+})();
+</script>
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
@@ -463,15 +483,8 @@ const NeuralNetwork = window.LlamaShared.NeuralNetwork;
 const AI={
   population:[],bestNetwork:null,generation:0,active:false,pausedForAI:false,
   inputSize:52,hiddenSize:48,outputSize:6,
-  serverUrl: (function() {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('server')) return params.get('server');
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        return window.location.origin;
-    }
-    return 'http://localhost:3000'; // Default to local
-  })(),
-  remoteUrl: 'https://llamagame-ai-server.wascomb.com',
+  serverUrl: window.LlamaRuntimeConfig?.serverBase || window.location.origin,
+  remoteUrl: window.LlamaRuntimeConfig?.defaultRemoteOrigin || 'https://llamagame-ai-server.wascomb.com',
   online:false,submitReady:true,networkAcquireInFlight:false,lastNetworkAcquireMs:0,
   lastServerFetchTime:0,
 
@@ -485,8 +498,8 @@ const AI={
     console.log('init: searching for local AI server...');
     let connected = await this.checkServer(this.serverUrl);
     
-    // Fallback to remote only if local fails and we aren't already on localhost
-    if (!connected && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    // Fallback to remote if local is unavailable
+    if (!connected && this.serverUrl !== this.remoteUrl) {
         console.log('init: local server not found, trying remote...');
         connected = await this.checkServer(this.remoteUrl);
     }
